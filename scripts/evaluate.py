@@ -1,7 +1,6 @@
 import json
 import statistics
 import time
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -14,9 +13,9 @@ from mllm.constants import (
     DEFAULT_BATCH_SIZE,
     DEFAULT_MAX_NEW_TOKENS,
     DEFAULT_WARMUP,
+    EVALUATION_RESULTS_DIR,
     FIELDS,
     MODELS,
-    RESULTS_DIR,
 )
 from mllm.inference import generate, load_model, parse_json, prepare_inputs
 from mllm.metrics import calculate_metrics
@@ -47,7 +46,7 @@ def main(
     warmup: int = DEFAULT_WARMUP,
     adapter: Path | None = None,
     limit: int | None = None,
-    output_dir: Path = RESULTS_DIR,
+    output_dir: Path = EVALUATION_RESULTS_DIR,
 ):
     if model not in MODELS:
         raise typer.BadParameter(f"Choose one of: {', '.join(MODELS)}")
@@ -178,8 +177,8 @@ def main(
     }
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-    output = output_dir / f"evaluate_{model}_{timestamp}.json"
+    variant = f"{adapter.parent.name}_{adapter.name}" if adapter else "zero_shot"
+    output = output_dir / f"{model}_{variant}_{data_json.stem}.json"
     output.write_text(json.dumps(record, indent=2, ensure_ascii=False))
 
     print("\nPer-field strict F1:")

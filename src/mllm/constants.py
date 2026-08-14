@@ -21,6 +21,8 @@ Return only a compact valid JSON object. Include only fields found in the docume
 Every value must be a JSON string kept exactly as written in the document. Do not add Markdown or explanations."""
 
 RESULTS_DIR = Path("results")
+BENCHMARK_RESULTS_DIR = RESULTS_DIR / "benchmarks"
+EVALUATION_RESULTS_DIR = RESULTS_DIR / "evaluation"
 TRAINING_RESULTS_DIR = RESULTS_DIR / "training"
 
 SYNTHETIC_IMAGE_SIZE = (1280, 960)  # (height, width)

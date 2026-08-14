@@ -1,7 +1,6 @@
 import json
 import statistics
 import time
-from datetime import UTC, datetime
 from pathlib import Path
 
 import torch
@@ -9,11 +8,11 @@ import typer
 from PIL import Image
 
 from mllm.constants import (
+    BENCHMARK_RESULTS_DIR,
     DEFAULT_BATCH_SIZE,
     DEFAULT_RUNS,
     DEFAULT_WARMUP,
     MODELS,
-    RESULTS_DIR,
     SYNTHETIC_IMAGE_SIZE,
     SYNTHETIC_MAX_NEW_TOKENS,
 )
@@ -96,9 +95,9 @@ def main(
         },
     }
 
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-    output = RESULTS_DIR / f"synthetic_{model}_{timestamp}.json"
+    BENCHMARK_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    variant = f"{adapter.parent.name}_{adapter.name}" if adapter else "zero_shot"
+    output = BENCHMARK_RESULTS_DIR / f"{model}_{variant}.json"
     output.write_text(json.dumps(record, indent=2))
     print(json.dumps(record["timing"], indent=2))
     print(f"Saved: {output}")
