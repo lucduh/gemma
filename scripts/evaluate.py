@@ -45,6 +45,7 @@ def main(
     batch_size: int = DEFAULT_BATCH_SIZE,
     max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS,
     warmup: int = DEFAULT_WARMUP,
+    adapter: Path | None = None,
     limit: int | None = None,
     output_dir: Path = RESULTS_DIR,
 ):
@@ -62,7 +63,9 @@ def main(
     samples = json.loads(data_json.read_text())
     if limit is not None:
         samples = samples[:limit]
-    loaded_model, processor = load_model(model)
+    loaded_model, processor = load_model(
+        model, adapter=str(adapter) if adapter else None
+    )
 
     if warmup and samples:
         warmup_samples = samples[:batch_size]
@@ -162,6 +165,7 @@ def main(
         "config": {
             "model": model,
             "model_id": MODELS[model],
+            "adapter": str(adapter) if adapter else None,
             "data_json": str(data_json),
             "batch_size": batch_size,
             "max_new_tokens": max_new_tokens,

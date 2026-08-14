@@ -2,6 +2,7 @@ import json
 import statistics
 import time
 from datetime import UTC, datetime
+from pathlib import Path
 
 import torch
 import typer
@@ -24,6 +25,7 @@ def main(
     batch_size: int = DEFAULT_BATCH_SIZE,
     runs: int = DEFAULT_RUNS,
     warmup: int = DEFAULT_WARMUP,
+    adapter: Path | None = None,
 ):
     if model not in MODELS:
         raise typer.BadParameter(f"Choose one of: {', '.join(MODELS)}")
@@ -36,7 +38,9 @@ def main(
 
     height, width = SYNTHETIC_IMAGE_SIZE
     images = [Image.new("RGB", (width, height), "white") for _ in range(batch_size)]
-    loaded_model, processor = load_model(model)
+    loaded_model, processor = load_model(
+        model, adapter=str(adapter) if adapter else None
+    )
     inputs = prepare_inputs(processor, images)
 
     for _ in range(warmup):
@@ -69,6 +73,7 @@ def main(
         "config": {
             "model": model,
             "model_id": MODELS[model],
+            "adapter": str(adapter) if adapter else None,
             "batch_size": batch_size,
             "runs": runs,
             "warmup": warmup,

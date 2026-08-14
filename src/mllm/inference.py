@@ -1,6 +1,7 @@
 import json
 
 import torch
+from peft import PeftModel
 from PIL import Image
 from transformers import (
     AutoModelForImageTextToText,
@@ -11,13 +12,15 @@ from transformers import (
 from mllm.constants import FIELDS, MODELS, PROMPT
 
 
-def load_model(name: str, device: str = "cuda"):
+def load_model(name: str, adapter: str | None = None, device: str = "cuda"):
     model_id = MODELS[name]
     processor = AutoProcessor.from_pretrained(model_id)
     model_class = (
         AutoModelForMultimodalLM if name == "gemma4" else AutoModelForImageTextToText
     )
     model = model_class.from_pretrained(model_id, dtype=torch.bfloat16).to(device)
+    if adapter is not None:
+        model = PeftModel.from_pretrained(model, adapter)
     model.eval()
     return model, processor
 

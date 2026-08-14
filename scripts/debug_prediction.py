@@ -24,6 +24,7 @@ def main(
     data_json: Annotated[Path, typer.Option(exists=True)],
     index: int = 0,
     max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS,
+    adapter: Path | None = None,
 ):
     if model not in MODELS:
         raise typer.BadParameter(f"Choose one of: {', '.join(MODELS)}")
@@ -36,7 +37,9 @@ def main(
     image_path = data_json.parent / sample["image"]
     image = Image.open(image_path).convert("RGB")
 
-    loaded_model, processor = load_model(model)
+    loaded_model, processor = load_model(
+        model, adapter=str(adapter) if adapter else None
+    )
     inputs = prepare_inputs(processor, [image])
     image.close()
 
