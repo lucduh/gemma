@@ -56,14 +56,14 @@ def prepare_inputs(processor, images: list[Image.Image], device: str = "cuda"):
     return inputs
 
 
-def generate(model, processor, inputs, max_new_tokens: int, fixed_length=False):
+def generate(model, processor, inputs, max_new_tokens: int):
     input_length = inputs["input_ids"].shape[1]
-    kwargs = {"max_new_tokens": max_new_tokens, "do_sample": False}
-    if fixed_length:
-        kwargs["min_new_tokens"] = max_new_tokens
-
     with torch.inference_mode():
-        output_ids = model.generate(**inputs, **kwargs)
+        output_ids = model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            do_sample=False,
+        )
 
     generated_ids = output_ids[:, input_length:]
     texts = processor.batch_decode(generated_ids, skip_special_tokens=True)

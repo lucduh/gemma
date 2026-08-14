@@ -17,13 +17,13 @@ FIELDS = [
 ]
 
 PROMPT = f"""Extract these fields from the document: {", ".join(FIELDS)}.
-Return only a JSON object with exactly these keys. Use null when a field is absent.
-Keep every extracted value exactly as written in the document."""
+Return only a compact valid JSON object. Include only fields found in the document and omit absent fields.
+Every value must be a JSON string kept exactly as written in the document. Do not add Markdown or explanations."""
 
 RESULTS_DIR = Path("results")
 SYNTHETIC_IMAGE_SIZE = (1280, 960)  # (height, width)
-SYNTHETIC_MAX_NEW_TOKENS = 64
-DEFAULT_MAX_NEW_TOKENS = 128
+SYNTHETIC_MAX_NEW_TOKENS = 512
+DEFAULT_MAX_NEW_TOKENS = 512
 DEFAULT_BATCH_SIZE = 1
 DEFAULT_RUNS = 10
 DEFAULT_WARMUP = 3

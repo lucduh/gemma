@@ -45,7 +45,6 @@ def main(
             processor,
             inputs,
             SYNTHETIC_MAX_NEW_TOKENS,
-            fixed_length=True,
         )
 
     torch.cuda.synchronize()
@@ -60,7 +59,6 @@ def main(
             processor,
             inputs,
             SYNTHETIC_MAX_NEW_TOKENS,
-            fixed_length=True,
         )
         torch.cuda.synchronize()
         latencies_ms.append((time.perf_counter() - start) * 1000)
