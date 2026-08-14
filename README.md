@@ -15,7 +15,8 @@ uv run python scripts/evaluate.py \
 
 # Fine-tune a LoRA adapter.
 uv run python scripts/train_lora.py \
-  --model gemma3 --data-json TRAIN.json --run-name gemma3-lora
+  --model gemma3 --data-json TRAIN.json --run-name gemma3-lora \
+  --batch-size 4 --gradient-accumulation 2
 
 # Inspect or evaluate the fine-tuned model.
 uv run python scripts/debug_prediction.py \

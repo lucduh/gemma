@@ -14,6 +14,7 @@ from mllm.constants import (
     DEFAULT_GRADIENT_ACCUMULATION,
     DEFAULT_LEARNING_RATE,
     DEFAULT_SEED,
+    DEFAULT_TRAIN_BATCH_SIZE,
     DEFAULT_VALIDATION_FRACTION,
     FIELDS,
     LORA_ALPHA,
@@ -47,46 +48,73 @@ def apply_template(processor, messages, add_generation_prompt):
         tokenize=True,
         return_dict=True,
         return_tensors="pt",
+        processor_kwargs={"padding": True},
         **extra,
     )
 
 
-def prepare_sample(sample, data_dir, processor):
-    """Create one training example and mask everything before the answer."""
-    image = Image.open(data_dir / sample["image"]).convert("RGB")
-    user = {
-        "role": "user",
-        "content": [
-            {"type": "image", "image": image},
-            {"type": "text", "text": PROMPT},
-        ],
-    }
-    assistant = {
-        "role": "assistant",
-        "content": [{"type": "text", "text": make_target(sample)}],
-    }
+def make_batches(samples, batch_size):
+    for start in range(0, len(samples), batch_size):
+        yield samples[start : start + batch_size]
 
-    prompt = apply_template(processor, [user], add_generation_prompt=True)
-    inputs = apply_template(processor, [user, assistant], add_generation_prompt=False)
-    image.close()
+
+def prepare_batch(samples, data_dir, processor, device="cuda"):
+    """Create a padded batch and mask everything before each answer."""
+    images = [
+        Image.open(data_dir / sample["image"]).convert("RGB") for sample in samples
+    ]
+    users = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image", "image": image},
+                {"type": "text", "text": PROMPT},
+            ],
+        }
+        for image in images
+    ]
+    prompts = [[user] for user in users]
+    conversations = [
+        [
+            user,
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": make_target(sample)}],
+            },
+        ]
+        for user, sample in zip(users, samples)
+    ]
+
+    prompt_inputs = apply_template(processor, prompts, add_generation_prompt=True)
+    inputs = apply_template(processor, conversations, add_generation_prompt=False)
+    for image in images:
+        image.close()
 
     labels = inputs["input_ids"].clone()
-    labels[:, : prompt["input_ids"].shape[1]] = -100
+    labels[inputs["attention_mask"] == 0] = -100
+    prompt_lengths = prompt_inputs["attention_mask"].sum(dim=1)
+    full_lengths = inputs["attention_mask"].sum(dim=1)
+    left_padding = processor.tokenizer.padding_side == "left"
+    for row, prompt_length in enumerate(prompt_lengths):
+        start = labels.shape[1] - full_lengths[row].item() if left_padding else 0
+        labels[row, start : start + prompt_length.item()] = -100
     inputs["labels"] = labels
 
     for key, value in inputs.items():
         if isinstance(value, torch.Tensor):
             dtype = torch.bfloat16 if value.is_floating_point() else value.dtype
-            inputs[key] = value.to("cuda", dtype=dtype)
+            inputs[key] = value.to(device, dtype=dtype)
     return inputs
 
 
-def get_validation_loss(model, samples, data_dir, processor):
+def get_validation_loss(model, samples, batch_size, data_dir, processor):
     model.eval()
     losses = []
     with torch.inference_mode():
-        for sample in tqdm(samples, desc="validation", leave=False):
-            inputs = prepare_sample(sample, data_dir, processor)
+        for batch in tqdm(
+            list(make_batches(samples, batch_size)), desc="validation", leave=False
+        ):
+            inputs = prepare_batch(batch, data_dir, processor)
             losses.append(model(**inputs).loss.item())
     return sum(losses) / len(losses)
 
@@ -97,6 +125,7 @@ def main(
     run_name: Annotated[str, typer.Option(help="Result directory name")],
     epochs: int = DEFAULT_EPOCHS,
     learning_rate: float = DEFAULT_LEARNING_RATE,
+    batch_size: int = DEFAULT_TRAIN_BATCH_SIZE,
     gradient_accumulation: int = DEFAULT_GRADIENT_ACCUMULATION,
     validation_fraction: float = DEFAULT_VALIDATION_FRACTION,
     seed: int = DEFAULT_SEED,
@@ -148,22 +177,27 @@ def main(
         optimizer.zero_grad()
         losses = []
 
-        progress = tqdm(training_samples, desc=f"epoch {epoch}/{epochs}")
-        for step, sample in enumerate(progress, start=1):
+        batches = list(make_batches(training_samples, batch_size))
+        progress = tqdm(batches, desc=f"epoch {epoch}/{epochs}")
+        for step, batch in enumerate(progress, start=1):
             loss = trained_model(
-                **prepare_sample(sample, data_json.parent, processor)
+                **prepare_batch(batch, data_json.parent, processor)
             ).loss
             (loss / gradient_accumulation).backward()
             losses.append(loss.item())
 
-            if step % gradient_accumulation == 0 or step == len(training_samples):
+            if step % gradient_accumulation == 0 or step == len(batches):
                 optimizer.step()
                 optimizer.zero_grad()
             progress.set_postfix(loss=f"{loss.item():.3f}")
 
         train_loss = sum(losses) / len(losses)
         val_loss = get_validation_loss(
-            trained_model, validation_samples, data_json.parent, processor
+            trained_model,
+            validation_samples,
+            batch_size,
+            data_json.parent,
+            processor,
         )
         history.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss})
         print(f"Epoch {epoch}: train_loss={train_loss:.4f} val_loss={val_loss:.4f}")
@@ -181,7 +215,9 @@ def main(
         "validation_documents": len(validation_samples),
         "epochs": epochs,
         "learning_rate": learning_rate,
+        "batch_size": batch_size,
         "gradient_accumulation": gradient_accumulation,
+        "effective_batch_size": batch_size * gradient_accumulation,
         "seed": seed,
         "lora": {"r": LORA_R, "alpha": LORA_ALPHA, "dropout": LORA_DROPOUT},
         "best_validation_loss": best_loss,
