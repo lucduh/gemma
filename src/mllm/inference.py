@@ -2,7 +2,11 @@ import json
 
 import torch
 from PIL import Image
-from transformers import AutoModelForImageTextToText, AutoProcessor
+from transformers import (
+    AutoModelForImageTextToText,
+    AutoModelForMultimodalLM,
+    AutoProcessor,
+)
 
 from mllm.constants import FIELDS, MODELS, PROMPT
 
@@ -10,10 +14,10 @@ from mllm.constants import FIELDS, MODELS, PROMPT
 def load_model(name: str, device: str = "cuda"):
     model_id = MODELS[name]
     processor = AutoProcessor.from_pretrained(model_id)
-    model = AutoModelForImageTextToText.from_pretrained(
-        model_id,
-        dtype=torch.bfloat16,
-    ).to(device)
+    model_class = (
+        AutoModelForMultimodalLM if name == "gemma4" else AutoModelForImageTextToText
+    )
+    model = model_class.from_pretrained(model_id, dtype=torch.bfloat16).to(device)
     model.eval()
     return model, processor
 
@@ -31,13 +35,19 @@ def prepare_inputs(processor, images: list[Image.Image], device: str = "cuda"):
         ]
         for image in images
     ]
+    template_kwargs = (
+        {"enable_thinking": False}
+        if processor.__class__.__name__ == "Gemma4Processor"
+        else {}
+    )
     inputs = processor.apply_chat_template(
         conversations,
         add_generation_prompt=True,
         tokenize=True,
         return_dict=True,
         return_tensors="pt",
-        padding=True,
+        processor_kwargs={"padding": True},
+        **template_kwargs,
     )
     for key, value in inputs.items():
         if isinstance(value, torch.Tensor):
