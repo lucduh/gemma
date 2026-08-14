@@ -75,12 +75,21 @@ def generate(model, processor, inputs, max_new_tokens: int, fixed_length=False):
 
 
 def parse_json(text: str) -> dict[str, str | None]:
-    try:
-        start = text.index("{")
-        end = text.rindex("}") + 1
-        value = json.loads(text[start:end])
-    except (ValueError, json.JSONDecodeError):
-        value = {}
+    value = {}
+    decoder = json.JSONDecoder()
+    for start, character in enumerate(text):
+        if character != "{":
+            continue
+        try:
+            candidate, _ = decoder.raw_decode(text[start:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(candidate, dict):
+            value = candidate
+            break
+
+    if isinstance(value.get("fields"), dict):
+        value = value["fields"]
 
     result = {}
     for field in FIELDS:
