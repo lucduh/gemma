@@ -45,6 +45,7 @@ def main(
     batch_size: int = DEFAULT_BATCH_SIZE,
     max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS,
     warmup: int = DEFAULT_WARMUP,
+    limit: int | None = None,
     output_dir: Path = RESULTS_DIR,
 ):
     if model not in MODELS:
@@ -53,10 +54,14 @@ def main(
         raise typer.BadParameter(
             "batch-size and max-new-tokens must be positive; warmup cannot be negative"
         )
+    if limit is not None and limit < 1:
+        raise typer.BadParameter("limit must be positive")
     if not torch.cuda.is_available():
         raise RuntimeError("Evaluation requires CUDA")
 
     samples = json.loads(data_json.read_text())
+    if limit is not None:
+        samples = samples[:limit]
     loaded_model, processor = load_model(model)
 
     if warmup and samples:
@@ -161,6 +166,7 @@ def main(
             "batch_size": batch_size,
             "max_new_tokens": max_new_tokens,
             "warmup": warmup,
+            "limit": limit,
         },
         "metrics": metrics,
         "timing": timing_summary,

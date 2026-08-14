@@ -10,6 +10,14 @@ uv run python scripts/benchmark_synthetic.py \
 
 uv run python scripts/evaluate.py \
   --model gemma4 --data-json ../test_data/train.json --batch-size 1
+
+# Inspect one sample without running the complete evaluation.
+uv run python scripts/debug_prediction.py \
+  --model gemma3 --data-json ../test_data/train.json --index 0
+
+# Evaluate only the first ten samples.
+uv run python scripts/evaluate.py \
+  --model gemma3 --data-json ../test_data/train.json --limit 10
 ```
 
 Model IDs, extraction fields, prompts, image size, and defaults are defined in `src/mllm/constants.py`. Results are written to `results/`.
