@@ -12,6 +12,7 @@ from tqdm import tqdm
 from mllm.constants import (
     DATA_DIR,
     DEFAULT_BATCH_SIZE,
+    DEFAULT_GEMMA4_IMAGE_TOKENS,
     DEFAULT_MAX_NEW_TOKENS,
     DEFAULT_WARMUP,
     EVALUATION_RESULTS_DIR,
@@ -44,6 +45,7 @@ def main(
     data_json: Path = DATA_DIR / "test.json",
     batch_size: int = DEFAULT_BATCH_SIZE,
     max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS,
+    image_tokens: int = DEFAULT_GEMMA4_IMAGE_TOKENS,
     warmup: int = DEFAULT_WARMUP,
     adapter: Path | None = None,
     limit: int | None = None,
@@ -70,7 +72,7 @@ def main(
     if warmup and samples:
         warmup_samples = samples[:batch_size]
         warmup_images = load_images(warmup_samples, data_json.parent)
-        inputs = prepare_inputs(processor, warmup_images)
+        inputs = prepare_inputs(processor, warmup_images, image_tokens=image_tokens)
         for _ in range(warmup):
             generate(loaded_model, processor, inputs, max_new_tokens)
         for image in warmup_images:
@@ -86,7 +88,7 @@ def main(
 
         preprocess_start = time.perf_counter()
         images = load_images(batch_samples, data_json.parent)
-        inputs = prepare_inputs(processor, images)
+        inputs = prepare_inputs(processor, images, image_tokens=image_tokens)
         preprocess_ms = (time.perf_counter() - preprocess_start) * 1000
 
         torch.cuda.synchronize()
@@ -170,6 +172,7 @@ def main(
             "data_json": str(data_json),
             "batch_size": batch_size,
             "max_new_tokens": max_new_tokens,
+            "image_tokens": image_tokens if model == "gemma4" else 256,
             "warmup": warmup,
             "limit": limit,
         },
@@ -180,7 +183,8 @@ def main(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     variant = f"{adapter.parent.name}_{adapter.name}" if adapter else "zero_shot"
-    output = output_dir / f"{model}_{variant}_{data_json.stem}.json"
+    image_variant = f"_{image_tokens}imgtok" if model == "gemma4" else ""
+    output = output_dir / f"{model}_{variant}_{data_json.stem}{image_variant}.json"
     output.write_text(json.dumps(record, indent=2, ensure_ascii=False))
 
     print("\nPer-field strict F1:")

@@ -10,6 +10,7 @@ from PIL import Image
 from mllm.constants import (
     BENCHMARK_RESULTS_DIR,
     DEFAULT_BATCH_SIZE,
+    DEFAULT_GEMMA4_IMAGE_TOKENS,
     DEFAULT_RUNS,
     DEFAULT_WARMUP,
     MODELS,
@@ -27,13 +28,14 @@ def main(
     height: int = SYNTHETIC_IMAGE_SIZE[0],
     width: int = SYNTHETIC_IMAGE_SIZE[1],
     output_tokens: int = SYNTHETIC_OUTPUT_TOKENS,
+    image_tokens: int = DEFAULT_GEMMA4_IMAGE_TOKENS,
     adapter: Path | None = None,
 ):
     images = [Image.new("RGB", (width, height), "white") for _ in range(batch_size)]
     loaded_model, processor = load_model(
         model, adapter=str(adapter) if adapter else None
     )
-    inputs = prepare_inputs(processor, images)
+    inputs = prepare_inputs(processor, images, image_tokens=image_tokens)
 
     with torch.inference_mode():
         for _ in range(warmup):
@@ -71,6 +73,7 @@ def main(
             "warmup": warmup,
             "source_image_size": [height, width],
             "output_tokens": output_tokens,
+            "image_tokens": image_tokens if model == "gemma4" else 256,
             "input_shapes": {
                 key: list(value.shape)
                 for key, value in inputs.items()
@@ -90,9 +93,10 @@ def main(
 
     BENCHMARK_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     variant = f"{adapter.parent.name}_{adapter.name}" if adapter else "zero_shot"
-    output = (
-        BENCHMARK_RESULTS_DIR
-        / f"{model}_{variant}_bs={batch_size}_{height}x{width}_{output_tokens}tok.json"
+    image_variant = f"_{image_tokens}imgtok" if model == "gemma4" else ""
+    output = BENCHMARK_RESULTS_DIR / (
+        f"{model}_{variant}_bs={batch_size}_{height}x{width}"
+        f"_{output_tokens}tok{image_variant}.json"
     )
     output.write_text(json.dumps(record, indent=2))
     print(json.dumps(record["timing"], indent=2))

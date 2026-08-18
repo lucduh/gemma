@@ -9,7 +9,7 @@ from transformers import (
     AutoProcessor,
 )
 
-from mllm.constants import FIELDS, MODELS, PROMPT
+from mllm.constants import DEFAULT_GEMMA4_IMAGE_TOKENS, FIELDS, MODELS, PROMPT
 
 
 def load_model(name: str, adapter: str | None = None, device: str = "cuda"):
@@ -25,7 +25,12 @@ def load_model(name: str, adapter: str | None = None, device: str = "cuda"):
     return model, processor
 
 
-def prepare_inputs(processor, images: list[Image.Image], device: str = "cuda"):
+def prepare_inputs(
+    processor,
+    images: list[Image.Image],
+    device: str = "cuda",
+    image_tokens: int = DEFAULT_GEMMA4_IMAGE_TOKENS,
+):
     conversations = [
         [
             {
@@ -38,18 +43,19 @@ def prepare_inputs(processor, images: list[Image.Image], device: str = "cuda"):
         ]
         for image in images
     ]
-    template_kwargs = (
-        {"enable_thinking": False}
-        if processor.__class__.__name__ == "Gemma4Processor"
-        else {}
-    )
+    is_gemma4 = processor.__class__.__name__ == "Gemma4Processor"
+    template_kwargs = {"enable_thinking": False} if is_gemma4 else {}
+    processor_kwargs = {"padding": True}
+    if is_gemma4:
+        processor_kwargs["images_kwargs"] = {"max_soft_tokens": image_tokens}
+
     inputs = processor.apply_chat_template(
         conversations,
         add_generation_prompt=True,
         tokenize=True,
         return_dict=True,
         return_tensors="pt",
-        processor_kwargs={"padding": True},
+        processor_kwargs=processor_kwargs,
         **template_kwargs,
     )
     for key, value in inputs.items():
