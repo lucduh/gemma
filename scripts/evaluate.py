@@ -10,6 +10,7 @@ from PIL import Image
 from tqdm import tqdm
 
 from mllm.constants import (
+    DATA_DIR,
     DEFAULT_BATCH_SIZE,
     DEFAULT_MAX_NEW_TOKENS,
     DEFAULT_WARMUP,
@@ -40,7 +41,7 @@ def load_images(samples: list[dict], data_dir: Path) -> list[Image.Image]:
 
 def main(
     model: Annotated[str, typer.Option(help=f"Model alias: {', '.join(MODELS)}")],
-    data_json: Annotated[Path, typer.Option(exists=True)],
+    data_json: Path = DATA_DIR / "test.json",
     batch_size: int = DEFAULT_BATCH_SIZE,
     max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS,
     warmup: int = DEFAULT_WARMUP,

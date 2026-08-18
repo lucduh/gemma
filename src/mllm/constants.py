@@ -6,7 +6,6 @@ MODELS = {
 }
 
 FIELDS = [
-    "E-mail",
     "cpf_cnpj_prestador",
     "cpf_cnpj_tomador",
     "data_emissao",
@@ -14,6 +13,7 @@ FIELDS = [
     "numero_da_nota",
     "servico_prestado",
     "valor_da_nota",
+    "calculo_do_imposto",
 ]
 
 PROMPT = f"""Extract these fields from the document: {", ".join(FIELDS)}.
@@ -21,12 +21,13 @@ Return only a compact valid JSON object. Include only fields found in the docume
 Every value must be a JSON string kept exactly as written in the document. Do not add Markdown or explanations."""
 
 RESULTS_DIR = Path("results")
+DATA_DIR = Path("domino/datasets/local/donut/data")
 BENCHMARK_RESULTS_DIR = RESULTS_DIR / "benchmarks"
 EVALUATION_RESULTS_DIR = RESULTS_DIR / "evaluation"
 TRAINING_RESULTS_DIR = RESULTS_DIR / "training"
 
 SYNTHETIC_IMAGE_SIZE = (1280, 960)  # (height, width)
-SYNTHETIC_MAX_NEW_TOKENS = 512
+SYNTHETIC_OUTPUT_TOKENS = 64
 DEFAULT_MAX_NEW_TOKENS = 512
 DEFAULT_BATCH_SIZE = 1
 DEFAULT_RUNS = 10
