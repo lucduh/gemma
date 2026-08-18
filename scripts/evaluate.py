@@ -165,6 +165,7 @@ def main(
         "config": {
             "model": model,
             "model_id": MODELS[model],
+            "attention_implementation": loaded_model.config._attn_implementation,
             "adapter": str(adapter) if adapter else None,
             "data_json": str(data_json),
             "batch_size": batch_size,

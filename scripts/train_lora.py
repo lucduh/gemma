@@ -210,6 +210,7 @@ def main(
     record = {
         "model": model,
         "model_id": MODELS[model],
+        "attention_implementation": base_model.config._attn_implementation,
         "data_json": str(data_json),
         "training_documents": len(training_samples),
         "validation_documents": len(validation_samples),
