@@ -7,6 +7,7 @@ MODELS = {
 
 FIELDS = [
     "cpf_cnpj_prestador",
+    "cep_prestador",
     "cpf_cnpj_tomador",
     "data_emissao",
     "destinataire",
@@ -16,20 +17,21 @@ FIELDS = [
     "calculo_do_imposto",
 ]
 
-PROMPT = """You are extracting structured information from a Brazilian service invoice (NFS-e).
+PROMPT = """Extract structured information from this Brazilian service invoice (NFS-e).
 
-Return exactly one compact valid JSON object and nothing else. Use only the following keys, and omit any field that is not clearly present:
+Return exactly one compact JSON object and nothing else. Include only clearly present fields, use only the keys below, and make every value a JSON string:
 
-- "numero_da_nota": Invoice number. Look for labels such as "Número da nota", "Nº", "N°", or "Nota". Return only the identifier, without a label or prefix.
-- "data_emissao": Invoice issue date. Look for labels such as "Data de emissão" or "Emitida em". Return only the date in DD/MM/YYYY format, without the time.
-- "cpf_cnpj_prestador": CPF or CNPJ from the PRESTADOR/EMITENTE section. This must belong to the service provider.
-- "cpf_cnpj_tomador": CPF or CNPJ from the TOMADOR section. This must belong to the service customer.
-- "destinataire": Name or company name of the service customer (TOMADOR).
-- "servico_prestado": Specific description of the service performed, such as "Agenciamento" or "comissão". Do not return a section heading or the provider's name.
-- "valor_da_nota": Total or gross invoice value. Prefer "Valor dos serviços", "Valor bruto", or the invoice total. Do not return taxes, deductions, the tax base, or the net value.
-- "calculo_do_imposto": Total federal tax withholding amount associated with the invoice. Prefer a value explicitly associated with "Retenções Federais". Do not return a tax rate, percentage, ISS value, tax base, or net value.
+- "numero_da_nota": value labeled "Número da nota", "Nº", "N°", or "Nota" in the invoice header. Remove the label and prefix.
+- "data_emissao": value labeled "Data de emissão" or "Emitida em". Return only the date as DD/MM/YYYY, without the time.
+- "cpf_cnpj_prestador": CPF/CNPJ explicitly identified in the PRESTADOR or EMITENTE section.
+- "cep_prestador": CEP explicitly identified in the PRESTADOR or EMITENTE section.
+- "cpf_cnpj_tomador": CPF/CNPJ explicitly identified in the TOMADOR section.
+- "destinataire": customer name or company name in the TOMADOR section.
+- "servico_prestado": actual service description written under "Discriminação dos Serviços" or an equivalent description section. Do not return the section heading or a company name.
+- "valor_da_nota": gross invoice total, preferably labeled "Valor dos serviços", "Valor bruto", or "Valor total". Do not use the net value, tax base, deductions, or taxes.
+- "calculo_do_imposto": amount explicitly labeled "Retenções Federais". Do not use a percentage, tax rate, ISS, tax base, or net value.
 
-Use the document layout and section headings as well as the text. PRESTADOR is the service provider; TOMADOR is the service customer. Extract a CPF/CNPJ only from an explicitly identified CPF/CNPJ field, never from a telephone number, CEP, municipal registration, or nearby identifier. Return each value without its field label. Preserve the document's spelling and numeric formatting except for the required invoice-number and date normalization. Do not infer, calculate, or reconstruct missing values. Every returned value must be a JSON string. Do not return null values, Markdown, comments, explanations, or text outside the JSON."""
+Use the layout to keep PRESTADOR/EMITENTE values separate from TOMADOR values. Take CPF/CNPJ and CEP only from their explicitly labeled fields; do not substitute telephone numbers, registrations, or nearby numbers. Preserve spelling and numeric formatting except for the required invoice-number and date normalization. Never infer or calculate a value. Omit missing fields; do not return null, Markdown, or explanations."""
 
 RESULTS_DIR = Path("results")
 DATA_DIR = Path("domino/datasets/local/donut/data")
