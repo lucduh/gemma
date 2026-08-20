@@ -1,4 +1,5 @@
 import json
+import random
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -148,39 +149,92 @@ def inspect_samples(
     return fields, full_field_names, issues
 
 
-def samples_to_frame(samples: list, split: str, fields: list[str]) -> pd.DataFrame:
-    """Flatten source samples to one row per image and one column per field."""
+def samples_to_frame(
+    samples: list,
+    fields: list[str],
+    dataset_dir: Path,
+    rng: random.Random,
+) -> tuple[pd.DataFrame, dict]:
+    """Flatten samples, resolve duplicate fields, and exclude missing images."""
     rows = []
-    for source_index, sample in enumerate(samples):
-        row = {"source_index": source_index, "image_path": None}
-        row.update(dict.fromkeys(fields))
+    excluded_rows = []
+    resolved_duplicates = []
 
-        if isinstance(sample, dict):
-            image = sample.get("image")
-            row["image_path"] = image.strip() if isinstance(image, str) else None
-            annotations = sample.get("fields", [])
-            if isinstance(annotations, list):
-                for annotation in annotations:
-                    if not isinstance(annotation, dict):
-                        continue
-                    full_name = annotation.get("field_name")
-                    if not isinstance(full_name, str):
-                        continue
-                    field = full_name.rsplit("/", 1)[-1].strip()
-                    if field not in fields:
-                        continue
-                    text = annotation.get("annotator_text")
-                    if isinstance(text, str):
-                        text = text.strip() or None
-                    elif text is not None:
-                        text = str(text)
-                    # Keep the first annotation. Duplicate fields are reported separately.
-                    if row[field] is None:
-                        row[field] = text
+    for source_index, sample in enumerate(samples):
+        if not isinstance(sample, dict):
+            excluded_rows.append(
+                {"source_index": source_index, "reason": "invalid_sample"}
+            )
+            continue
+
+        image = sample.get("image")
+        if not isinstance(image, str) or not image.strip():
+            excluded_rows.append(
+                {"source_index": source_index, "reason": "invalid_image_path"}
+            )
+            continue
+
+        image = image.strip()
+        resolved_image = Path(image)
+        if not resolved_image.is_absolute():
+            resolved_image = dataset_dir / resolved_image
+        if not resolved_image.is_file():
+            excluded_rows.append(
+                {
+                    "source_index": source_index,
+                    "image_path": image,
+                    "reason": "missing_image",
+                }
+            )
+            continue
+
+        row = {"source_index": source_index, "image_path": image}
+        row.update(dict.fromkeys(fields))
+        candidates = {field: [] for field in fields}
+        annotations = sample.get("fields", [])
+        if isinstance(annotations, list):
+            for annotation in annotations:
+                if not isinstance(annotation, dict):
+                    continue
+                full_name = annotation.get("field_name")
+                if not isinstance(full_name, str):
+                    continue
+                field = full_name.rsplit("/", 1)[-1].strip()
+                if field not in candidates:
+                    continue
+                text = annotation.get("annotator_text")
+                if isinstance(text, str):
+                    text = text.strip() or None
+                elif text is not None:
+                    text = str(text).strip() or None
+                candidates[field].append(text)
+
+        for field, values in candidates.items():
+            populated = [value for value in values if value is not None]
+            if populated:
+                row[field] = rng.choice(populated)
+            if len(values) > 1:
+                resolved_duplicates.append(
+                    {
+                        "source_index": source_index,
+                        "field": field,
+                        "occurrences": len(values),
+                        "populated_occurrences": len(populated),
+                    }
+                )
 
         rows.append(row)
 
-    return pd.DataFrame(rows, columns=["source_index", "image_path", *fields])
+    frame = pd.DataFrame(rows, columns=["source_index", "image_path", *fields])
+    cleaning = {
+        "input_rows": len(samples),
+        "output_rows": len(frame),
+        "excluded_row_count": len(excluded_rows),
+        "excluded_rows": excluded_rows,
+        "resolved_duplicate_count": len(resolved_duplicates),
+        "resolved_duplicates": resolved_duplicates,
+    }
+    return frame, cleaning
 
 
 def issue_dicts(issues: list[DatasetIssue]) -> list[dict]:

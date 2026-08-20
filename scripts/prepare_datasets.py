@@ -1,4 +1,5 @@
 import json
+import random
 from collections import Counter
 from pathlib import Path
 from typing import Annotated
@@ -32,8 +33,9 @@ def main(
         typer.Option(help="Root containing one directory per dataset."),
     ] = DATA_ROOT,
     overwrite: bool = False,
+    seed: int = 42,
 ):
-    """Discover fields and flatten each JSON split into a Parquet table."""
+    """Create clean Parquet splits while discovering fields automatically."""
     for name in selected_datasets(dataset):
         dataset_dir = data_root / name
         split_samples = {}
@@ -65,12 +67,18 @@ def main(
             raise FileExistsError(f"Refusing to overwrite {paths}; pass --overwrite")
 
         split_rows = {}
+        cleaning = {}
         for split, samples in split_samples.items():
-            frame = samples_to_frame(samples, split, fields)
+            rng = random.Random(f"{seed}:{name}:{split}")
+            frame, split_cleaning = samples_to_frame(samples, fields, dataset_dir, rng)
             frame.to_parquet(outputs[split], index=False)
             split_rows[split] = len(frame)
+            cleaning[split] = split_cleaning
             typer.echo(
-                f"Wrote {outputs[split]} ({len(frame)} rows, {len(fields)} fields)"
+                f"Wrote {outputs[split]} ({len(frame)} rows, {len(fields)} fields; "
+                f"excluded {split_cleaning['excluded_row_count']} missing/invalid "
+                f"images; resolved {split_cleaning['resolved_duplicate_count']} "
+                "duplicate fields)"
             )
 
         issue_counts = Counter(issue.code for issue in all_issues)
@@ -81,6 +89,8 @@ def main(
             "fields": fields,
             "full_field_names": sorted(all_full_names),
             "rows": split_rows,
+            "duplicate_selection_seed": seed,
+            "cleaning": cleaning,
             "issue_counts": dict(sorted(issue_counts.items())),
             "issues": issue_dicts(all_issues),
         }
