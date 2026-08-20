@@ -1,11 +1,10 @@
+import argparse
 import json
 import statistics
 import time
 from pathlib import Path
-from typing import Annotated
 
 import torch
-import typer
 from PIL import Image
 from tqdm import tqdm
 
@@ -34,30 +33,17 @@ def load_images(samples: list[dict], data_dir: Path) -> list[Image.Image]:
 
 
 def main(
-    model: Annotated[str, typer.Option(help=f"Model alias: {', '.join(MODELS)}")],
-    dataset: Annotated[str, typer.Option(help=f"Dataset name: {', '.join(DATASETS)}")],
-    split: str = "test",
-    batch_size: int = DEFAULT_BATCH_SIZE,
-    max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS,
-    image_tokens: int = DEFAULT_GEMMA4_IMAGE_TOKENS,
-    warmup: int = DEFAULT_WARMUP,
-    adapter: Path | None = None,
-    limit: int | None = None,
-    output_dir: Path = EVALUATION_RESULTS_DIR,
+    model: str,
+    dataset: str,
+    split: str,
+    batch_size: int,
+    max_new_tokens: int,
+    image_tokens: int,
+    warmup: int,
+    adapter: Path | None,
+    limit: int | None,
+    output_dir: Path,
 ):
-    if model not in MODELS:
-        raise typer.BadParameter(f"Choose one of: {', '.join(MODELS)}")
-    if batch_size < 1 or max_new_tokens < 1 or warmup < 0:
-        raise typer.BadParameter(
-            "batch-size and max-new-tokens must be positive; warmup cannot be negative"
-        )
-    if limit is not None and limit < 1:
-        raise typer.BadParameter("limit must be positive")
-    if not torch.cuda.is_available():
-        raise RuntimeError("Evaluation requires CUDA")
-
-    if dataset not in DATASETS:
-        raise typer.BadParameter(f"Choose one of: {', '.join(DATASETS)}")
     dataset_split = load_split(dataset, split)
     samples = dataset_split.samples
     fields = dataset_split.fields
@@ -208,5 +194,20 @@ def main(
     print(f"Saved: {output}")
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Evaluate a model on a dataset.")
+    parser.add_argument("--model", required=True, choices=MODELS)
+    parser.add_argument("--dataset", required=True, choices=DATASETS)
+    parser.add_argument("--split", default="test", choices=("train", "test"))
+    parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
+    parser.add_argument("--max-new-tokens", type=int, default=DEFAULT_MAX_NEW_TOKENS)
+    parser.add_argument("--image-tokens", type=int, default=DEFAULT_GEMMA4_IMAGE_TOKENS)
+    parser.add_argument("--warmup", type=int, default=DEFAULT_WARMUP)
+    parser.add_argument("--adapter", type=Path)
+    parser.add_argument("--limit", type=int)
+    parser.add_argument("--output-dir", type=Path, default=EVALUATION_RESULTS_DIR)
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    typer.run(main)
+    main(**vars(parse_args()))

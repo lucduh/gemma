@@ -1,9 +1,8 @@
+import argparse
 import json
 import random
-from typing import Annotated
 
 import torch
-import typer
 from peft import LoraConfig, get_peft_model
 from PIL import Image
 from tqdm import tqdm
@@ -116,29 +115,20 @@ def get_validation_loss(
 
 
 def main(
-    model: Annotated[str, typer.Option(help=f"Model alias: {', '.join(MODELS)}")],
-    dataset: Annotated[str, typer.Option(help=f"Dataset name: {', '.join(DATASETS)}")],
-    run_name: Annotated[str, typer.Option(help="Result directory name")],
-    split: str = "train",
-    epochs: int = DEFAULT_EPOCHS,
-    learning_rate: float = DEFAULT_LEARNING_RATE,
-    batch_size: int = DEFAULT_TRAIN_BATCH_SIZE,
-    gradient_accumulation: int = DEFAULT_GRADIENT_ACCUMULATION,
-    validation_fraction: float = DEFAULT_VALIDATION_FRACTION,
-    seed: int = DEFAULT_SEED,
+    model: str,
+    dataset: str,
+    run_name: str,
+    split: str,
+    epochs: int,
+    learning_rate: float,
+    batch_size: int,
+    gradient_accumulation: int,
+    validation_fraction: float,
+    seed: int,
 ):
-    if model not in MODELS:
-        raise typer.BadParameter(f"Choose one of: {', '.join(MODELS)}")
-    if dataset not in DATASETS:
-        raise typer.BadParameter(f"Choose one of: {', '.join(DATASETS)}")
-
     dataset_split = load_split(dataset, split)
     samples = dataset_split.samples.copy()
     fields = dataset_split.fields
-    if len(samples) < 2:
-        raise ValueError("LoRA training requires at least two documents")
-    if not 0 < validation_fraction < 1:
-        raise typer.BadParameter("validation-fraction must be between 0 and 1")
     rng = random.Random(seed)
     rng.shuffle(samples)
 
@@ -157,8 +147,6 @@ def main(
         for name, _ in base_model.named_modules()
         if "language_model" in name and name.endswith(projections)
     ]
-    if not targets:
-        raise RuntimeError(f"No language-model LoRA targets found for {model}")
     config = LoraConfig(
         r=LORA_R,
         lora_alpha=LORA_ALPHA,
@@ -253,5 +241,26 @@ def main(
     print(f"Saved training results to {run_dir}")
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Fine-tune a LoRA adapter.")
+    parser.add_argument("--model", required=True, choices=MODELS)
+    parser.add_argument("--dataset", required=True, choices=DATASETS)
+    parser.add_argument("--run-name", required=True)
+    parser.add_argument("--split", default="train", choices=("train", "test"))
+    parser.add_argument("--epochs", type=int, default=DEFAULT_EPOCHS)
+    parser.add_argument("--learning-rate", type=float, default=DEFAULT_LEARNING_RATE)
+    parser.add_argument("--batch-size", type=int, default=DEFAULT_TRAIN_BATCH_SIZE)
+    parser.add_argument(
+        "--gradient-accumulation",
+        type=int,
+        default=DEFAULT_GRADIENT_ACCUMULATION,
+    )
+    parser.add_argument(
+        "--validation-fraction", type=float, default=DEFAULT_VALIDATION_FRACTION
+    )
+    parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    typer.run(main)
+    main(**vars(parse_args()))

@@ -1,10 +1,10 @@
+import argparse
 import json
 import statistics
 import time
 from pathlib import Path
 
 import torch
-import typer
 from PIL import Image
 
 from mllm.constants import (
@@ -21,15 +21,15 @@ from mllm.inference import load_model, prepare_inputs
 
 
 def main(
-    model: str = typer.Option(..., help=f"Model alias: {', '.join(MODELS)}"),
-    batch_size: int = DEFAULT_BATCH_SIZE,
-    runs: int = DEFAULT_RUNS,
-    warmup: int = DEFAULT_WARMUP,
-    height: int = SYNTHETIC_IMAGE_SIZE[0],
-    width: int = SYNTHETIC_IMAGE_SIZE[1],
-    output_tokens: int = SYNTHETIC_OUTPUT_TOKENS,
-    image_tokens: int = DEFAULT_GEMMA4_IMAGE_TOKENS,
-    adapter: Path | None = None,
+    model: str,
+    batch_size: int,
+    runs: int,
+    warmup: int,
+    height: int,
+    width: int,
+    output_tokens: int,
+    image_tokens: int,
+    adapter: Path | None,
 ):
     images = [Image.new("RGB", (width, height), "white") for _ in range(batch_size)]
     loaded_model, processor = load_model(
@@ -110,5 +110,19 @@ def main(
     print(f"Saved: {output}")
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Benchmark synthetic model latency.")
+    parser.add_argument("--model", required=True, choices=MODELS)
+    parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
+    parser.add_argument("--runs", type=int, default=DEFAULT_RUNS)
+    parser.add_argument("--warmup", type=int, default=DEFAULT_WARMUP)
+    parser.add_argument("--height", type=int, default=SYNTHETIC_IMAGE_SIZE[0])
+    parser.add_argument("--width", type=int, default=SYNTHETIC_IMAGE_SIZE[1])
+    parser.add_argument("--output-tokens", type=int, default=SYNTHETIC_OUTPUT_TOKENS)
+    parser.add_argument("--image-tokens", type=int, default=DEFAULT_GEMMA4_IMAGE_TOKENS)
+    parser.add_argument("--adapter", type=Path)
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    typer.run(main)
+    main(**vars(parse_args()))

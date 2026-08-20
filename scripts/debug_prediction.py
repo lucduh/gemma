@@ -1,9 +1,9 @@
+import argparse
 import json
 import time
-from typing import Annotated
+from pathlib import Path
 
 import torch
-import typer
 from PIL import Image
 
 from mllm.constants import DEFAULT_MAX_NEW_TOKENS, MODELS
@@ -12,28 +12,22 @@ from mllm.inference import generate, load_model, parse_json, prepare_inputs
 
 
 def main(
-    model: Annotated[str, typer.Option(help=f"Model alias: {', '.join(MODELS)}")],
-    dataset: Annotated[str, typer.Option(help=f"Dataset name: {', '.join(DATASETS)}")],
-    split: str = "test",
-    index: int = 0,
-    max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS,
-    adapter: str | None = None,
+    model: str,
+    dataset: str,
+    split: str,
+    index: int,
+    max_new_tokens: int,
+    adapter: Path | None,
 ):
-    if model not in MODELS:
-        raise typer.BadParameter(f"Choose one of: {', '.join(MODELS)}")
-    if dataset not in DATASETS:
-        raise typer.BadParameter(f"Choose one of: {', '.join(DATASETS)}")
-
     dataset_split = load_split(dataset, split)
-    samples = dataset_split.samples
-    if not 0 <= index < len(samples):
-        raise typer.BadParameter(f"index must be between 0 and {len(samples) - 1}")
-
-    sample = samples[index]
+    sample = dataset_split.samples[index]
     path = image_path(sample, dataset_split.directory)
-    image = Image.open(path).convert("RGB")
+    with Image.open(path) as source:
+        image = source.convert("RGB")
 
-    loaded_model, processor = load_model(model, adapter=adapter)
+    loaded_model, processor = load_model(
+        model, adapter=str(adapter) if adapter else None
+    )
     inputs = prepare_inputs(processor, [image], dataset_split.prompt)
     image.close()
 
@@ -42,7 +36,6 @@ def main(
         for key, value in inputs.items()
         if isinstance(value, torch.Tensor)
     }
-
     torch.cuda.synchronize()
     start = time.perf_counter()
     texts, _ = generate(loaded_model, processor, inputs, max_new_tokens)
@@ -51,13 +44,13 @@ def main(
 
     text = texts[0]
     fields = dataset_split.fields
-    gt = ground_truth(sample, fields)
+    truth = ground_truth(sample, fields)
     prediction = parse_json(text, fields)
     field_results = {
         field: {
-            "ground_truth": gt[field],
+            "ground_truth": truth[field],
             "prediction": prediction[field],
-            "correct": gt[field] == prediction[field],
+            "correct": truth[field] == prediction[field],
         }
         for field in fields
     }
@@ -72,5 +65,16 @@ def main(
     print(json.dumps(field_results, indent=2, ensure_ascii=False))
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Inspect one model prediction.")
+    parser.add_argument("--model", required=True, choices=MODELS)
+    parser.add_argument("--dataset", required=True, choices=DATASETS)
+    parser.add_argument("--split", default="test", choices=("train", "test"))
+    parser.add_argument("--index", type=int, default=0)
+    parser.add_argument("--max-new-tokens", type=int, default=DEFAULT_MAX_NEW_TOKENS)
+    parser.add_argument("--adapter", type=Path)
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    typer.run(main)
+    main(**vars(parse_args()))
