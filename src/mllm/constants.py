@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 MODELS = {
@@ -34,7 +35,14 @@ Return exactly one compact JSON object and nothing else. Include only clearly pr
 Use the layout to keep PRESTADOR/EMITENTE values separate from TOMADOR values. Take CPF/CNPJ and CEP only from their explicitly labeled fields; do not substitute telephone numbers, registrations, or nearby numbers. Preserve spelling and numeric formatting except for the required invoice-number and date normalization. Never infer or calculate a value. Omit missing fields; do not return null, Markdown, or explanations."""
 
 RESULTS_DIR = Path("results")
-DATA_DIR = Path("domino/datasets/local/donut/data")
+DATA_ROOT = Path(os.environ.get("MLLM_DATA_ROOT", "/domino/datasets/mllm/data"))
+DATASET_PREFIXES = {
+    "BR": "BR/COMISSION_PAYMENET/",
+    "KARAPASS_DEATH": "FR_CD/SUCCESSIONS/",
+    "KARAPASS_ID": "FR_KARAPASS/CLAIMS/",
+}
+# Backward-compatible default used by scripts that have not yet moved to --dataset.
+DATA_DIR = DATA_ROOT / "BR"
 BENCHMARK_RESULTS_DIR = RESULTS_DIR / "benchmarks"
 EVALUATION_RESULTS_DIR = RESULTS_DIR / "evaluation"
 TRAINING_RESULTS_DIR = RESULTS_DIR / "training"
