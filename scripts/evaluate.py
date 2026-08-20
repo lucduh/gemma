@@ -10,15 +10,14 @@ from PIL import Image
 from tqdm import tqdm
 
 from mllm.constants import (
-    DATA_DIR,
     DEFAULT_BATCH_SIZE,
     DEFAULT_GEMMA4_IMAGE_TOKENS,
     DEFAULT_MAX_NEW_TOKENS,
     DEFAULT_WARMUP,
     EVALUATION_RESULTS_DIR,
-    FIELDS,
     MODELS,
 )
+from mllm.datasets import DATASETS, ground_truth, image_path, load_split
 from mllm.inference import generate, load_model, parse_json, prepare_inputs
 from mllm.metrics import calculate_metrics
 
@@ -28,21 +27,16 @@ def batches(items: list, size: int):
         yield items[start : start + size]
 
 
-def ground_truth(sample: dict) -> dict[str, str | None]:
-    values = {
-        field["field_name"].split("/")[-1]: field.get("annotator_text", "").strip()
-        for field in sample.get("fields", [])
-    }
-    return {field: values.get(field) or None for field in FIELDS}
-
-
 def load_images(samples: list[dict], data_dir: Path) -> list[Image.Image]:
-    return [Image.open(data_dir / sample["image"]).convert("RGB") for sample in samples]
+    return [
+        Image.open(image_path(sample, data_dir)).convert("RGB") for sample in samples
+    ]
 
 
 def main(
     model: Annotated[str, typer.Option(help=f"Model alias: {', '.join(MODELS)}")],
-    data_json: Path = DATA_DIR / "test.json",
+    dataset: Annotated[str, typer.Option(help=f"Dataset name: {', '.join(DATASETS)}")],
+    split: str = "test",
     batch_size: int = DEFAULT_BATCH_SIZE,
     max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS,
     image_tokens: int = DEFAULT_GEMMA4_IMAGE_TOKENS,
@@ -62,7 +56,11 @@ def main(
     if not torch.cuda.is_available():
         raise RuntimeError("Evaluation requires CUDA")
 
-    samples = json.loads(data_json.read_text())
+    if dataset not in DATASETS:
+        raise typer.BadParameter(f"Choose one of: {', '.join(DATASETS)}")
+    dataset_split = load_split(dataset, split)
+    samples = dataset_split.samples
+    fields = dataset_split.fields
     if limit is not None:
         samples = samples[:limit]
     loaded_model, processor = load_model(
@@ -71,8 +69,13 @@ def main(
 
     if warmup and samples:
         warmup_samples = samples[:batch_size]
-        warmup_images = load_images(warmup_samples, data_json.parent)
-        inputs = prepare_inputs(processor, warmup_images, image_tokens=image_tokens)
+        warmup_images = load_images(warmup_samples, dataset_split.directory)
+        inputs = prepare_inputs(
+            processor,
+            warmup_images,
+            dataset_split.prompt,
+            image_tokens=image_tokens,
+        )
         for _ in range(warmup):
             generate(loaded_model, processor, inputs, max_new_tokens)
         for image in warmup_images:
@@ -87,8 +90,10 @@ def main(
         batch_start = time.perf_counter()
 
         preprocess_start = time.perf_counter()
-        images = load_images(batch_samples, data_json.parent)
-        inputs = prepare_inputs(processor, images, image_tokens=image_tokens)
+        images = load_images(batch_samples, dataset_split.directory)
+        inputs = prepare_inputs(
+            processor, images, dataset_split.prompt, image_tokens=image_tokens
+        )
         preprocess_ms = (time.perf_counter() - preprocess_start) * 1000
 
         torch.cuda.synchronize()
@@ -100,19 +105,19 @@ def main(
         generation_ms = (time.perf_counter() - generation_start) * 1000
 
         for sample, text in zip(batch_samples, texts):
-            gt = ground_truth(sample)
-            pred = parse_json(text)
+            gt = ground_truth(sample, fields)
+            pred = parse_json(text, fields)
             field_results = {
                 field: {
                     "ground_truth": gt[field],
                     "prediction": pred[field],
                     "correct": gt[field] == pred[field],
                 }
-                for field in FIELDS
+                for field in fields
             }
             predictions.append(
                 {
-                    "image": sample["image"],
+                    "image": sample["image_path"],
                     "text": text,
                     "ground_truth": gt,
                     "prediction": pred,
@@ -136,7 +141,7 @@ def main(
         for image in images:
             image.close()
 
-    metrics = calculate_metrics(predictions)
+    metrics = calculate_metrics(predictions, fields)
     total_docs = len(predictions)
     total_end_to_end_s = sum(item["end_to_end_ms"] for item in timings) / 1000
     total_generation_s = sum(item["generation_ms"] for item in timings) / 1000
@@ -167,9 +172,14 @@ def main(
         "config": {
             "model": model,
             "model_id": MODELS[model],
-            "attention_implementation": loaded_model.config._attn_implementation,
+            "attention_implementation": getattr(
+                loaded_model.config, "_attn_implementation", None
+            ),
             "adapter": str(adapter) if adapter else None,
-            "data_json": str(data_json),
+            "dataset": dataset,
+            "split": split,
+            "data_path": str(dataset_split.path),
+            "fields": list(fields),
             "batch_size": batch_size,
             "max_new_tokens": max_new_tokens,
             "image_tokens": image_tokens if model == "gemma4" else 256,
@@ -184,7 +194,7 @@ def main(
     output_dir.mkdir(parents=True, exist_ok=True)
     variant = f"{adapter.parent.name}_{adapter.name}" if adapter else "zero_shot"
     image_variant = f"_{image_tokens}imgtok" if model == "gemma4" else ""
-    output = output_dir / f"{model}_{variant}_{data_json.stem}{image_variant}.json"
+    output = output_dir / (f"{model}_{variant}_{dataset}_{split}{image_variant}.json")
     output.write_text(json.dumps(record, indent=2, ensure_ascii=False))
 
     print("\nPer-field strict F1:")

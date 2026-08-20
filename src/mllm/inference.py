@@ -9,7 +9,7 @@ from transformers import (
     AutoProcessor,
 )
 
-from mllm.constants import DEFAULT_GEMMA4_IMAGE_TOKENS, FIELDS, MODELS, PROMPT
+from mllm.constants import DEFAULT_GEMMA4_IMAGE_TOKENS, MODELS
 
 
 def load_model(name: str, adapter: str | None = None, device: str = "cuda"):
@@ -28,6 +28,7 @@ def load_model(name: str, adapter: str | None = None, device: str = "cuda"):
 def prepare_inputs(
     processor,
     images: list[Image.Image],
+    prompt: str,
     device: str = "cuda",
     image_tokens: int = DEFAULT_GEMMA4_IMAGE_TOKENS,
 ):
@@ -37,7 +38,7 @@ def prepare_inputs(
                 "role": "user",
                 "content": [
                     {"type": "image", "image": image},
-                    {"type": "text", "text": PROMPT},
+                    {"type": "text", "text": prompt},
                 ],
             }
         ]
@@ -83,7 +84,7 @@ def generate(model, processor, inputs, max_new_tokens: int):
     return texts, int(token_count)
 
 
-def parse_json(text: str) -> dict[str, str | None]:
+def parse_json(text: str, fields: tuple[str, ...]) -> dict[str, str | None]:
     value = {}
     decoder = json.JSONDecoder()
     for start, character in enumerate(text):
@@ -101,7 +102,7 @@ def parse_json(text: str) -> dict[str, str | None]:
         value = value["fields"]
 
     result = {}
-    for field in FIELDS:
+    for field in fields:
         field_value = value.get(field)
         result[field] = None if field_value is None else str(field_value).strip()
     return result

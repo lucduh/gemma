@@ -6,20 +6,21 @@ from typing import Annotated
 
 import typer
 
-from mllm.constants import DATA_ROOT, DATASET_PREFIXES
+from mllm.constants import DATA_ROOT
 from mllm.dataset_tools import (
     inspect_samples,
     issue_dicts,
     load_samples,
     samples_to_frame,
 )
+from mllm.datasets import DATASETS
 
 
 def selected_datasets(dataset: str | None) -> list[str]:
     if dataset is None:
-        return list(DATASET_PREFIXES)
-    if dataset not in DATASET_PREFIXES:
-        raise typer.BadParameter(f"Choose one of: {', '.join(DATASET_PREFIXES)}")
+        return list(DATASETS)
+    if dataset not in DATASETS:
+        raise typer.BadParameter(f"Choose one of: {', '.join(DATASETS)}")
     return [dataset]
 
 
@@ -49,7 +50,7 @@ def main(
                 raise FileNotFoundError(source)
             samples = load_samples(source)
             fields, full_names, issues = inspect_samples(
-                samples, split, DATASET_PREFIXES[name]
+                samples, split, DATASETS[name].field_prefix
             )
             split_samples[split] = samples
             all_fields.update(fields)
@@ -85,7 +86,7 @@ def main(
         report = {
             "dataset": name,
             "directory": str(dataset_dir),
-            "expected_prefix": DATASET_PREFIXES[name],
+            "expected_prefix": DATASETS[name].field_prefix,
             "fields": fields,
             "full_field_names": sorted(all_full_names),
             "rows": split_rows,

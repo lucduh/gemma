@@ -1,11 +1,8 @@
-from mllm.constants import FIELDS
-
-
-def calculate_metrics(predictions: list[dict]) -> dict:
+def calculate_metrics(predictions: list[dict], fields: tuple[str, ...]) -> dict:
     totals = {"tp": 0, "fp": 0, "fn": 0}
     per_field = {}
 
-    for field in FIELDS:
+    for field in fields:
         tp = fp = fn = 0
         for item in predictions:
             gt = item["ground_truth"][field]

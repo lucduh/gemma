@@ -35,7 +35,12 @@ def main(
     loaded_model, processor = load_model(
         model, adapter=str(adapter) if adapter else None
     )
-    inputs = prepare_inputs(processor, images, image_tokens=image_tokens)
+    inputs = prepare_inputs(
+        processor,
+        images,
+        "Describe the image briefly.",
+        image_tokens=image_tokens,
+    )
 
     with torch.inference_mode():
         for _ in range(warmup):
@@ -66,7 +71,9 @@ def main(
         "config": {
             "model": model,
             "model_id": MODELS[model],
-            "attention_implementation": loaded_model.config._attn_implementation,
+            "attention_implementation": getattr(
+                loaded_model.config, "_attn_implementation", None
+            ),
             "adapter": str(adapter) if adapter else None,
             "batch_size": batch_size,
             "runs": runs,

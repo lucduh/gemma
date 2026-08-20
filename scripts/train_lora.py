@@ -1,6 +1,5 @@
 import json
 import random
-from pathlib import Path
 from typing import Annotated
 
 import torch
@@ -16,23 +15,18 @@ from mllm.constants import (
     DEFAULT_SEED,
     DEFAULT_TRAIN_BATCH_SIZE,
     DEFAULT_VALIDATION_FRACTION,
-    FIELDS,
     LORA_ALPHA,
     LORA_DROPOUT,
     LORA_R,
     MODELS,
-    PROMPT,
     TRAINING_RESULTS_DIR,
 )
+from mllm.datasets import DATASETS, image_path, load_split
 from mllm.inference import load_model
 
 
-def make_target(sample):
-    values = {
-        item["field_name"].split("/")[-1]: item.get("annotator_text", "").strip()
-        for item in sample.get("fields", [])
-    }
-    target = {field: values[field] for field in FIELDS if values.get(field)}
+def make_target(sample, fields):
+    target = {field: sample[field] for field in fields if sample.get(field)}
     return json.dumps(target, ensure_ascii=False, separators=(",", ":"))
 
 
@@ -58,17 +52,17 @@ def make_batches(samples, batch_size):
         yield samples[start : start + batch_size]
 
 
-def prepare_batch(samples, data_dir, processor, device="cuda"):
+def prepare_batch(samples, data_dir, processor, prompt, fields, device="cuda"):
     """Create a padded batch and mask everything before each answer."""
     images = [
-        Image.open(data_dir / sample["image"]).convert("RGB") for sample in samples
+        Image.open(image_path(sample, data_dir)).convert("RGB") for sample in samples
     ]
     users = [
         {
             "role": "user",
             "content": [
                 {"type": "image", "image": image},
-                {"type": "text", "text": PROMPT},
+                {"type": "text", "text": prompt},
             ],
         }
         for image in images
@@ -79,7 +73,7 @@ def prepare_batch(samples, data_dir, processor, device="cuda"):
             user,
             {
                 "role": "assistant",
-                "content": [{"type": "text", "text": make_target(sample)}],
+                "content": [{"type": "text", "text": make_target(sample, fields)}],
             },
         ]
         for user, sample in zip(users, samples)
@@ -107,22 +101,25 @@ def prepare_batch(samples, data_dir, processor, device="cuda"):
     return inputs
 
 
-def get_validation_loss(model, samples, batch_size, data_dir, processor):
+def get_validation_loss(
+    model, samples, batch_size, data_dir, processor, prompt, fields
+):
     model.eval()
     losses = []
     with torch.inference_mode():
         for batch in tqdm(
             list(make_batches(samples, batch_size)), desc="validation", leave=False
         ):
-            inputs = prepare_batch(batch, data_dir, processor)
+            inputs = prepare_batch(batch, data_dir, processor, prompt, fields)
             losses.append(model(**inputs).loss.item())
     return sum(losses) / len(losses)
 
 
 def main(
     model: Annotated[str, typer.Option(help=f"Model alias: {', '.join(MODELS)}")],
-    data_json: Annotated[Path, typer.Option(exists=True)],
+    dataset: Annotated[str, typer.Option(help=f"Dataset name: {', '.join(DATASETS)}")],
     run_name: Annotated[str, typer.Option(help="Result directory name")],
+    split: str = "train",
     epochs: int = DEFAULT_EPOCHS,
     learning_rate: float = DEFAULT_LEARNING_RATE,
     batch_size: int = DEFAULT_TRAIN_BATCH_SIZE,
@@ -130,11 +127,24 @@ def main(
     validation_fraction: float = DEFAULT_VALIDATION_FRACTION,
     seed: int = DEFAULT_SEED,
 ):
-    samples = json.loads(data_json.read_text())
+    if model not in MODELS:
+        raise typer.BadParameter(f"Choose one of: {', '.join(MODELS)}")
+    if dataset not in DATASETS:
+        raise typer.BadParameter(f"Choose one of: {', '.join(DATASETS)}")
+
+    dataset_split = load_split(dataset, split)
+    samples = dataset_split.samples.copy()
+    fields = dataset_split.fields
+    if len(samples) < 2:
+        raise ValueError("LoRA training requires at least two documents")
+    if not 0 < validation_fraction < 1:
+        raise typer.BadParameter("validation-fraction must be between 0 and 1")
     rng = random.Random(seed)
     rng.shuffle(samples)
 
-    validation_size = max(1, round(len(samples) * validation_fraction))
+    validation_size = min(
+        len(samples) - 1, max(1, round(len(samples) * validation_fraction))
+    )
     validation_samples = samples[:validation_size]
     training_samples = samples[validation_size:]
 
@@ -147,6 +157,8 @@ def main(
         for name, _ in base_model.named_modules()
         if "language_model" in name and name.endswith(projections)
     ]
+    if not targets:
+        raise RuntimeError(f"No language-model LoRA targets found for {model}")
     config = LoraConfig(
         r=LORA_R,
         lora_alpha=LORA_ALPHA,
@@ -181,7 +193,13 @@ def main(
         progress = tqdm(batches, desc=f"epoch {epoch}/{epochs}")
         for step, batch in enumerate(progress, start=1):
             loss = trained_model(
-                **prepare_batch(batch, data_json.parent, processor)
+                **prepare_batch(
+                    batch,
+                    dataset_split.directory,
+                    processor,
+                    dataset_split.prompt,
+                    fields,
+                )
             ).loss
             (loss / gradient_accumulation).backward()
             losses.append(loss.item())
@@ -196,8 +214,10 @@ def main(
             trained_model,
             validation_samples,
             batch_size,
-            data_json.parent,
+            dataset_split.directory,
             processor,
+            dataset_split.prompt,
+            fields,
         )
         history.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss})
         print(f"Epoch {epoch}: train_loss={train_loss:.4f} val_loss={val_loss:.4f}")
@@ -210,8 +230,13 @@ def main(
     record = {
         "model": model,
         "model_id": MODELS[model],
-        "attention_implementation": base_model.config._attn_implementation,
-        "data_json": str(data_json),
+        "attention_implementation": getattr(
+            base_model.config, "_attn_implementation", None
+        ),
+        "dataset": dataset,
+        "split": split,
+        "data_path": str(dataset_split.path),
+        "fields": list(fields),
         "training_documents": len(training_samples),
         "validation_documents": len(validation_samples),
         "epochs": epochs,

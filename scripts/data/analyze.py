@@ -6,14 +6,15 @@ import pandas as pd
 import typer
 from PIL import Image
 
-from mllm.constants import DATA_ROOT, DATASET_PREFIXES
+from mllm.constants import DATA_ROOT
+from mllm.datasets import DATASETS
 
 
 def selected_datasets(dataset: str | None) -> list[str]:
     if dataset is None:
-        return list(DATASET_PREFIXES)
-    if dataset not in DATASET_PREFIXES:
-        raise typer.BadParameter(f"Choose one of: {', '.join(DATASET_PREFIXES)}")
+        return list(DATASETS)
+    if dataset not in DATASETS:
+        raise typer.BadParameter(f"Choose one of: {', '.join(DATASETS)}")
     return [dataset]
 
 
@@ -63,7 +64,7 @@ def main(
             path = dataset_dir / f"{split}.parquet"
             if not path.is_file():
                 raise FileNotFoundError(
-                    f"{path} does not exist; run scripts/prepare_datasets.py first"
+                    f"{path} does not exist; run scripts/data/prepare.py first"
                 )
             frame = pd.read_parquet(path)
             frames[split] = frame
