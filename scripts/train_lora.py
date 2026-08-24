@@ -4,7 +4,6 @@ import random
 
 import torch
 from peft import LoraConfig, get_peft_model
-from PIL import Image
 from tqdm import tqdm
 
 from mllm.config import (
@@ -21,12 +20,12 @@ from mllm.config import (
     MODELS,
     TRAINING_RESULTS_DIR,
 )
-from mllm.dataset import image_path, load_split
+from mllm.dataset import Dataset
 from mllm.inference import load_model
 
 
-def make_target(sample, fields):
-    target = {field: sample[field] for field in fields if sample.get(field)}
+def make_target(gt, fields):
+    target = {field: gt[field] for field in fields if gt.get(field)}
     return json.dumps(target, ensure_ascii=False, separators=(",", ":"))
 
 
@@ -52,17 +51,15 @@ def make_batches(samples, batch_size):
         yield samples[start : start + batch_size]
 
 
-def prepare_batch(samples, data_dir, processor, prompt, fields, device="cuda"):
-    """Create a padded batch and mask everything before each answer."""
-    images = [
-        Image.open(image_path(sample, data_dir)).convert("RGB") for sample in samples
-    ]
+def prepare_batch(dataset, samples, processor, device):
+    batch = [dataset[index] for index in samples]
+    images, _, gts = zip(*batch)
     users = [
         {
             "role": "user",
             "content": [
                 {"type": "image", "image": image},
-                {"type": "text", "text": prompt},
+                {"type": "text", "text": dataset.prompt},
             ],
         }
         for image in images
@@ -73,16 +70,14 @@ def prepare_batch(samples, data_dir, processor, prompt, fields, device="cuda"):
             user,
             {
                 "role": "assistant",
-                "content": [{"type": "text", "text": make_target(sample, fields)}],
+                "content": [{"type": "text", "text": make_target(gt, dataset.fields)}],
             },
         ]
-        for user, sample in zip(users, samples)
+        for user, gt in zip(users, gts, strict=True)
     ]
 
     prompt_inputs = apply_template(processor, prompts, add_generation_prompt=True)
     inputs = apply_template(processor, conversations, add_generation_prompt=False)
-    for image in images:
-        image.close()
 
     labels = inputs["input_ids"].clone()
     labels[inputs["attention_mask"] == 0] = -100
@@ -101,22 +96,21 @@ def prepare_batch(samples, data_dir, processor, prompt, fields, device="cuda"):
     return inputs
 
 
-def get_validation_loss(
-    model, samples, batch_size, data_dir, processor, prompt, fields
-):
+def get_validation_loss(model, dataset, samples, batch_size, processor, device):
     model.eval()
     losses = []
     with torch.inference_mode():
         for batch in tqdm(
             list(make_batches(samples, batch_size)), desc="validation", leave=False
         ):
-            inputs = prepare_batch(batch, data_dir, processor, prompt, fields)
+            inputs = prepare_batch(dataset, batch, processor, device)
             losses.append(model(**inputs).loss.item())
     return sum(losses) / len(losses)
 
 
 def main(
     model: str,
+    device: str,
     dataset: str,
     run_name: str,
     split: str,
@@ -127,9 +121,11 @@ def main(
     validation_fraction: float,
     seed: int,
 ):
-    dataset_split = load_split(dataset, split)
-    samples = dataset_split.samples.copy()
-    fields = dataset_split.fields
+    model_name = model
+    dataset_name = dataset
+
+    dataset = Dataset(dataset_name, split)
+    samples = list(range(len(dataset)))
     rng = random.Random(seed)
     rng.shuffle(samples)
 
@@ -139,7 +135,9 @@ def main(
     validation_samples = samples[:validation_size]
     training_samples = samples[validation_size:]
 
-    base_model, processor = load_model(model)
+    model = load_model(model_name, device, None)
+    base_model = model.model
+    processor = model.processor
 
     # Full module names keep LoRA out of the frozen vision tower.
     projections = ("q_proj", "k_proj", "v_proj", "o_proj")
@@ -181,15 +179,8 @@ def main(
         batches = list(make_batches(training_samples, batch_size))
         progress = tqdm(batches, desc=f"epoch {epoch}/{epochs}")
         for step, batch in enumerate(progress, start=1):
-            loss = trained_model(
-                **prepare_batch(
-                    batch,
-                    dataset_split.directory,
-                    processor,
-                    dataset_split.prompt,
-                    fields,
-                )
-            ).loss
+            inputs = prepare_batch(dataset, batch, processor, model.device)
+            loss = trained_model(**inputs).loss
             (loss / gradient_accumulation).backward()
             losses.append(loss.item())
 
@@ -201,12 +192,11 @@ def main(
         train_loss = sum(losses) / len(losses)
         val_loss = get_validation_loss(
             trained_model,
+            dataset,
             validation_samples,
             batch_size,
-            dataset_split.directory,
             processor,
-            dataset_split.prompt,
-            fields,
+            model.device,
         )
         history.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss})
         print(f"Epoch {epoch}: train_loss={train_loss:.4f} val_loss={val_loss:.4f}")
@@ -217,15 +207,15 @@ def main(
 
     trained_model.save_pretrained(run_dir / "last")
     record = {
-        "model": model,
-        "model_id": MODELS[model],
+        "model": model_name,
+        "model_id": str(model.model_id),
         "attention_implementation": getattr(
             base_model.config, "_attn_implementation", None
         ),
-        "dataset": dataset,
+        "dataset": dataset_name,
         "split": split,
-        "data_path": str(dataset_split.path),
-        "fields": list(fields),
+        "data_path": str(dataset.path),
+        "fields": list(dataset.fields),
         "training_documents": len(training_samples),
         "validation_documents": len(validation_samples),
         "epochs": epochs,
@@ -234,17 +224,19 @@ def main(
         "gradient_accumulation": gradient_accumulation,
         "effective_batch_size": batch_size * gradient_accumulation,
         "seed": seed,
+        "device": str(model.device),
         "lora": {"r": LORA_R, "alpha": LORA_ALPHA, "dropout": LORA_DROPOUT},
         "best_validation_loss": best_loss,
         "history": history,
     }
-    (run_dir / "train.json").write_text(json.dumps(record, indent=2))
+    (run_dir / "train.json").write_text(json.dumps(record, indent=2), encoding="utf-8")
     print(f"Saved training results to {run_dir}")
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Fine-tune a LoRA adapter.")
     parser.add_argument("--model", required=True, choices=MODELS)
+    parser.add_argument("--device", default="cuda")
     parser.add_argument("--dataset", required=True, choices=DATASETS)
     parser.add_argument("--run-name", required=True)
     parser.add_argument("--split", default="train", choices=("train", "test"))

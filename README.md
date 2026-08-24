@@ -1,6 +1,6 @@
 # Multimodal document extraction
 
-Zero-shot evaluation for Gemma 3, Gemma 4, and InternVL 3 across multiple document datasets. LoRA training and synthetic benchmarking are currently awaiting migration to the new runtime API.
+Zero-shot evaluation and LoRA training for Gemma 3, Gemma 4, and InternVL 3 across multiple document datasets. Synthetic benchmarking is awaiting migration to the new runtime API.
 
 ## Setup
 
@@ -36,7 +36,7 @@ uv run python scripts/data/analyze.py --dataset BR
 
 `--data-root` can be passed to the preparation and analysis commands without changing the registered inference paths.
 
-## Run inference
+## Run inference and training
 
 ```bash
 # Inspect one prediction.
@@ -51,7 +51,11 @@ uv run python scripts/evaluate.py \
 uv run python scripts/evaluate.py \
   --model gemma4-e2b --dataset BR --split test
 
-# Evaluate an adapter.
+# Fine-tune a LoRA adapter.
+uv run python scripts/train_lora.py \
+  --model gemma3 --dataset KARAPASS_ID --run-name gemma3-karapass-id
+
+# Evaluate the adapter.
 uv run python scripts/evaluate.py \
   --model gemma3 --dataset KARAPASS_ID \
   --adapter results/training/gemma3-karapass-id/best
@@ -73,4 +77,4 @@ Configuration and implementation are separated as follows:
 
 InternVL uses the Transformers-native `OpenGVLab/InternVL3-8B-hf` checkpoint.
 
-Evaluation artifacts are written under `results/evaluation/`.
+Evaluation artifacts are written under `results/evaluation/`; training adapters and metrics are written under `results/training/`.
