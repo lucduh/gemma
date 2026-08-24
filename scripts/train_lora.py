@@ -7,7 +7,8 @@ from peft import LoraConfig, get_peft_model
 from PIL import Image
 from tqdm import tqdm
 
-from mllm.constants import (
+from mllm.config import (
+    DATASETS,
     DEFAULT_EPOCHS,
     DEFAULT_GRADIENT_ACCUMULATION,
     DEFAULT_LEARNING_RATE,
@@ -20,7 +21,7 @@ from mllm.constants import (
     MODELS,
     TRAINING_RESULTS_DIR,
 )
-from mllm.datasets import DATASETS, image_path, load_split
+from mllm.dataset import image_path, load_split
 from mllm.inference import load_model
 
 

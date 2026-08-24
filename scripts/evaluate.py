@@ -5,10 +5,10 @@ import time
 from pathlib import Path
 
 import torch
-from PIL import Image
 from tqdm import tqdm
 
-from mllm.constants import (
+from mllm.config import (
+    DATASETS,
     DEFAULT_BATCH_SIZE,
     DEFAULT_GEMMA4_IMAGE_TOKENS,
     DEFAULT_MAX_NEW_TOKENS,
@@ -16,24 +16,14 @@ from mllm.constants import (
     EVALUATION_RESULTS_DIR,
     MODELS,
 )
-from mllm.datasets import DATASETS, ground_truth, image_path, load_split
-from mllm.inference import generate, load_model, parse_json, prepare_inputs
+from mllm.dataset import Dataset
+from mllm.inference import load_model, parse_json
 from mllm.metrics import calculate_metrics
-
-
-def batches(items: list, size: int):
-    for start in range(0, len(items), size):
-        yield items[start : start + size]
-
-
-def load_images(samples: list[dict], data_dir: Path) -> list[Image.Image]:
-    return [
-        Image.open(image_path(sample, data_dir)).convert("RGB") for sample in samples
-    ]
 
 
 def main(
     model: str,
+    device: str,
     dataset: str,
     split: str,
     batch_size: int,
@@ -44,69 +34,61 @@ def main(
     limit: int | None,
     output_dir: Path,
 ):
-    dataset_split = load_split(dataset, split)
-    samples = dataset_split.samples
-    fields = dataset_split.fields
+    model_name = model
+    dataset_name = dataset
+
+    dataset = Dataset(dataset_name, split)
+    model = load_model(model_name, device, adapter)
+
     if limit is not None:
-        samples = samples[:limit]
-    loaded_model, processor = load_model(
-        model, adapter=str(adapter) if adapter else None
+        dataset.samples = dataset.samples.iloc[:limit]
+
+    dataloader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=batch_size,
+        collate_fn=lambda samples: tuple(zip(*samples)),
     )
 
-    if warmup and samples:
-        warmup_samples = samples[:batch_size]
-        warmup_images = load_images(warmup_samples, dataset_split.directory)
-        inputs = prepare_inputs(
-            processor,
-            warmup_images,
-            dataset_split.prompt,
-            image_tokens=image_tokens,
-        )
+    if warmup:
+        images, _, _ = next(iter(dataloader))
+        inputs = model.prepare_inputs(images, dataset.prompt, image_tokens)
         for _ in range(warmup):
-            generate(loaded_model, processor, inputs, max_new_tokens)
-        for image in warmup_images:
-            image.close()
+            model.generate(inputs, max_new_tokens)
+        model.synchronize()
 
-    torch.cuda.synchronize()
-    torch.cuda.reset_peak_memory_stats()
+    model.reset_peak_memory_stats()
     predictions = []
     timings = []
 
-    for batch_samples in tqdm(list(batches(samples, batch_size)), desc="evaluating"):
+    for images, paths, gts in tqdm(dataloader, desc="evaluating"):
         batch_start = time.perf_counter()
 
         preprocess_start = time.perf_counter()
-        images = load_images(batch_samples, dataset_split.directory)
-        inputs = prepare_inputs(
-            processor, images, dataset_split.prompt, image_tokens=image_tokens
-        )
+        inputs = model.prepare_inputs(images, dataset.prompt, image_tokens)
+        model.synchronize()
         preprocess_ms = (time.perf_counter() - preprocess_start) * 1000
 
-        torch.cuda.synchronize()
         generation_start = time.perf_counter()
-        texts, generated_tokens = generate(
-            loaded_model, processor, inputs, max_new_tokens
-        )
-        torch.cuda.synchronize()
+        texts, generated_tokens = model.generate(inputs, max_new_tokens)
+        model.synchronize()
         generation_ms = (time.perf_counter() - generation_start) * 1000
 
-        for sample, text in zip(batch_samples, texts):
-            gt = ground_truth(sample, fields)
-            pred = parse_json(text, fields)
+        for gt, path, text in zip(gts, paths, texts, strict=True):
+            prediction = parse_json(text, dataset.fields)
             field_results = {
                 field: {
                     "ground_truth": gt[field],
-                    "prediction": pred[field],
-                    "correct": gt[field] == pred[field],
+                    "prediction": prediction[field],
+                    "correct": gt[field] == prediction[field],
                 }
-                for field in fields
+                for field in dataset.fields
             }
             predictions.append(
                 {
-                    "image": sample["image_path"],
+                    "image": path,
                     "text": text,
                     "ground_truth": gt,
-                    "prediction": pred,
+                    "prediction": prediction,
                     "fields": field_results,
                     "document_correct": all(
                         value["correct"] for value in field_results.values()
@@ -114,63 +96,50 @@ def main(
                 }
             )
 
-        end_to_end_ms = (time.perf_counter() - batch_start) * 1000
         timings.append(
             {
-                "documents": len(batch_samples),
+                "documents": len(gts),
                 "preprocess_ms": preprocess_ms,
                 "generation_ms": generation_ms,
-                "end_to_end_ms": end_to_end_ms,
+                "end_to_end_ms": (time.perf_counter() - batch_start) * 1000,
                 "generated_tokens": generated_tokens,
             }
         )
-        for image in images:
-            image.close()
 
-    metrics = calculate_metrics(predictions, fields)
-    total_docs = len(predictions)
+    metrics = calculate_metrics(predictions, dataset.fields)
+    total_documents = len(predictions)
     total_end_to_end_s = sum(item["end_to_end_ms"] for item in timings) / 1000
     total_generation_s = sum(item["generation_ms"] for item in timings) / 1000
     total_tokens = sum(item["generated_tokens"] for item in timings)
     end_to_end_values = [item["end_to_end_ms"] for item in timings]
 
     timing_summary = {
-        "mean_batch_latency_ms": statistics.mean(end_to_end_values) if timings else 0.0,
-        "median_batch_latency_ms": statistics.median(end_to_end_values)
-        if timings
-        else 0.0,
-        "mean_ms_per_document": total_end_to_end_s * 1000 / total_docs
-        if total_docs
-        else 0.0,
-        "documents_per_second": total_docs / total_end_to_end_s
-        if total_end_to_end_s
-        else 0.0,
-        "generated_tokens_per_second": total_tokens / total_generation_s
-        if total_generation_s
-        else 0.0,
+        "mean_batch_latency_ms": statistics.mean(end_to_end_values),
+        "median_batch_latency_ms": statistics.median(end_to_end_values),
+        "mean_ms_per_document": total_end_to_end_s * 1000 / total_documents,
+        "documents_per_second": total_documents / total_end_to_end_s,
+        "generated_tokens_per_second": total_tokens / total_generation_s,
         "total_preprocess_s": sum(item["preprocess_ms"] for item in timings) / 1000,
         "total_generation_s": total_generation_s,
         "total_end_to_end_s": total_end_to_end_s,
-        "peak_gpu_memory_gb": torch.cuda.max_memory_allocated() / 1024**3,
+        "peak_gpu_memory_gb": model.peak_memory_gb(),
         "batches": timings,
     }
     record = {
         "config": {
-            "model": model,
-            "model_id": MODELS[model],
-            "attention_implementation": getattr(
-                loaded_model.config, "_attn_implementation", None
-            ),
+            "model": model_name,
+            "model_path": str(model.model_id),
             "adapter": str(adapter) if adapter else None,
-            "dataset": dataset,
+            "dataset": dataset_name,
             "split": split,
-            "data_path": str(dataset_split.path),
-            "fields": list(fields),
+            "data_path": str(dataset.path),
+            "fields": list(dataset.fields),
             "batch_size": batch_size,
             "max_new_tokens": max_new_tokens,
-            "image_tokens": image_tokens if model == "gemma4" else 256,
+            "image_tokens": image_tokens if model.supports_image_tokens else None,
             "warmup": warmup,
             "limit": limit,
+            "device": str(model.device),
         },
         "metrics": metrics,
         "timing": timing_summary,
@@ -179,9 +148,13 @@ def main(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     variant = f"{adapter.parent.name}_{adapter.name}" if adapter else "zero_shot"
-    image_variant = f"_{image_tokens}imgtok" if model == "gemma4" else ""
-    output = output_dir / (f"{model}_{variant}_{dataset}_{split}{image_variant}.json")
-    output.write_text(json.dumps(record, indent=2, ensure_ascii=False))
+    image_variant = f"_{image_tokens}imgtok" if model.supports_image_tokens else ""
+    output = output_dir / (
+        f"{model_name}_{variant}_{dataset_name}_{split}{image_variant}.json"
+    )
+    output.write_text(
+        json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
 
     print("\nPer-field strict F1:")
     for field, values in metrics["per_field"].items():
@@ -197,6 +170,7 @@ def main(
 def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate a model on a dataset.")
     parser.add_argument("--model", required=True, choices=MODELS)
+    parser.add_argument("--device", default="cuda")
     parser.add_argument("--dataset", required=True, choices=DATASETS)
     parser.add_argument("--split", default="test", choices=("train", "test"))
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)

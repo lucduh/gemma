@@ -1,6 +1,6 @@
 # Multimodal document extraction
 
-Zero-shot evaluation, LoRA fine-tuning, and latency benchmarks for Gemma 3, Gemma 4, and InternVL 3 across multiple document datasets.
+Zero-shot evaluation for Gemma 3, Gemma 4, and InternVL 3 across multiple document datasets. LoRA training and synthetic benchmarking are currently awaiting migration to the new runtime API.
 
 ## Setup
 
@@ -8,23 +8,23 @@ Zero-shot evaluation, LoRA fine-tuning, and latency benchmarks for Gemma 3, Gemm
 uv sync
 ```
 
-Datasets are selected by name and live under `/domino/datasets/mllm/data` by default:
+Production datasets are registered with explicit paths in `src/mllm/config.py`:
 
 ```text
-/domino/datasets/mllm/data/
+/domino/datasets/local/MLLM/data/
 ├── BR/
 ├── KARAPASS_DEATH/
 └── KARAPASS_ID/
 ```
 
-Set `MLLM_DATA_ROOT` to use another root directory.
+Each prepared Parquet split contains `source_index`, an absolute `image_path`, and the extraction fields.
 
 ## Prepare and analyze data
 
 The preparation command discovers fields from `train.json` and `test.json`, resolves duplicate annotations, excludes rows with missing images, and writes clean Parquet splits.
 
 ```bash
-# Prepare all registered datasets.
+# Prepare all production datasets under the configured data root.
 uv run python scripts/data/prepare.py
 
 # Prepare one dataset again.
@@ -34,7 +34,9 @@ uv run python scripts/data/prepare.py --dataset BR --overwrite
 uv run python scripts/data/analyze.py --dataset BR
 ```
 
-## Run inference and training
+`--data-root` can be passed to the preparation and analysis commands without changing the registered inference paths.
+
+## Run inference
 
 ```bash
 # Inspect one prediction.
@@ -45,37 +47,30 @@ uv run python scripts/debug_prediction.py \
 uv run python scripts/evaluate.py \
   --model internvl --dataset KARAPASS_DEATH --split test --limit 10
 
-# Fine-tune a LoRA adapter.
-uv run python scripts/train_lora.py \
-  --model gemma3 --dataset KARAPASS_ID --run-name gemma3-karapass-id \
-  --batch-size 4 --gradient-accumulation 2
+# Evaluate a Gemma 4 variant.
+uv run python scripts/evaluate.py \
+  --model gemma4-e2b --dataset BR --split test
 
-# Evaluate the adapter.
+# Evaluate an adapter.
 uv run python scripts/evaluate.py \
   --model gemma3 --dataset KARAPASS_ID \
   --adapter results/training/gemma3-karapass-id/best
-
-# Synthetic latency benchmark.
-uv run python scripts/benchmark_synthetic.py \
-  --model internvl --batch-size 1 --runs 10 --warmup 3
 ```
 
-Model aliases and paths are in `src/mllm/constants.py`. Dataset registration and prompts are intentionally separate:
+The tiny `TEST` dataset and weight-free `test` model run the inference code on CPU:
 
-- `src/mllm/datasets.py` — dataset registry and Parquet loading
-- `src/mllm/prompts.py` — all dataset-specific prompts in one place
-- `src/mllm/constants.py` — model IDs, paths, and runtime defaults
+```bash
+uv run python scripts/debug_prediction.py --model test --device cpu --dataset TEST
+uv run python scripts/evaluate.py --model test --device cpu --dataset TEST
+```
+
+Configuration and implementation are separated as follows:
+
+- `src/mllm/config.py` — model paths, dataset paths, and runtime defaults
+- `src/mllm/dataset.py` — Parquet dataset loading
+- `src/mllm/inference.py` — model loading, input preparation, and generation
+- `src/mllm/prompts.py` — dataset-specific prompt templates
 
 InternVL uses the Transformers-native `OpenGVLab/InternVL3-8B-hf` checkpoint.
 
-Artifacts use stable paths under `results/`:
-
-```text
-results/
-├── benchmarks/
-├── evaluation/
-└── training/<run-name>/
-    ├── best/
-    ├── last/
-    └── train.json
-```
+Evaluation artifacts are written under `results/evaluation/`.

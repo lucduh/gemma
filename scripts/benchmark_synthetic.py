@@ -7,7 +7,7 @@ from pathlib import Path
 import torch
 from PIL import Image
 
-from mllm.constants import (
+from mllm.config import (
     BENCHMARK_RESULTS_DIR,
     DEFAULT_BATCH_SIZE,
     DEFAULT_GEMMA4_IMAGE_TOKENS,

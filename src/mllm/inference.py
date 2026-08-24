@@ -2,63 +2,14 @@ import json
 
 import torch
 from peft import PeftModel
-from PIL import Image
 from transformers import (
     AutoModelForImageTextToText,
     AutoModelForMultimodalLM,
     AutoProcessor,
 )
 
-from mllm.constants import DEFAULT_GEMMA4_IMAGE_TOKENS, MODELS
 
-
-def load_model(name: str, adapter: str | None = None, device: str = "cuda"):
-    model_id = MODELS[name]
-    processor = AutoProcessor.from_pretrained(model_id)
-    model_class = (
-        AutoModelForMultimodalLM if name == "gemma4" else AutoModelForImageTextToText
-    )
-    model = model_class.from_pretrained(model_id, dtype=torch.bfloat16).to(device)
-    if adapter is not None:
-        model = PeftModel.from_pretrained(model, adapter)
-    model.eval()
-    return model, processor
-
-
-def prepare_inputs(
-    processor,
-    images: list[Image.Image],
-    prompt: str,
-    device: str = "cuda",
-    image_tokens: int = DEFAULT_GEMMA4_IMAGE_TOKENS,
-):
-    conversations = [
-        [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image", "image": image},
-                    {"type": "text", "text": prompt},
-                ],
-            }
-        ]
-        for image in images
-    ]
-    is_gemma4 = processor.__class__.__name__ == "Gemma4Processor"
-    template_kwargs = {"enable_thinking": False} if is_gemma4 else {}
-    processor_kwargs = {"padding": True}
-    if is_gemma4:
-        processor_kwargs["images_kwargs"] = {"max_soft_tokens": image_tokens}
-
-    inputs = processor.apply_chat_template(
-        conversations,
-        add_generation_prompt=True,
-        tokenize=True,
-        return_dict=True,
-        return_tensors="pt",
-        processor_kwargs=processor_kwargs,
-        **template_kwargs,
-    )
+def move_inputs(inputs, device):
     for key, value in inputs.items():
         if isinstance(value, torch.Tensor):
             dtype = torch.bfloat16 if value.is_floating_point() else value.dtype
@@ -66,22 +17,169 @@ def prepare_inputs(
     return inputs
 
 
-def generate(model, processor, inputs, max_new_tokens: int):
-    input_length = inputs["input_ids"].shape[1]
-    with torch.inference_mode():
-        output_ids = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=False,
-        )
+class BaseModel:
+    supports_image_tokens = False
 
-    generated_ids = output_ids[:, input_length:]
-    texts = processor.batch_decode(generated_ids, skip_special_tokens=True)
-    pad_token_id = processor.tokenizer.pad_token_id
-    token_count = generated_ids.numel()
-    if pad_token_id is not None:
-        token_count = generated_ids.ne(pad_token_id).sum().item()
-    return texts, int(token_count)
+    def __init__(self, model_id, device, adapter=None):
+        self.model_id = model_id
+        self.device = torch.device(device)
+
+    def generate(self, inputs, max_new_tokens):
+        input_length = inputs["input_ids"].shape[1]
+        with torch.inference_mode():
+            output_ids = self.model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                do_sample=False,
+            )
+
+        generated_ids = output_ids[:, input_length:]
+        texts = self.processor.batch_decode(generated_ids, skip_special_tokens=True)
+        return texts, generated_ids.numel()
+
+    def synchronize(self):
+        if self.device.type == "cuda":
+            torch.cuda.synchronize(self.device)
+
+    def reset_peak_memory_stats(self):
+        if self.device.type == "cuda":
+            torch.cuda.reset_peak_memory_stats(self.device)
+
+    def peak_memory_gb(self):
+        if self.device.type != "cuda":
+            return 0.0
+        return torch.cuda.max_memory_allocated(self.device) / 1024**3
+
+
+class Gemma3(BaseModel):
+    def __init__(self, model_id, device, adapter=None):
+        super().__init__(model_id, device)
+        self.processor = AutoProcessor.from_pretrained(model_id)
+        self.model = AutoModelForImageTextToText.from_pretrained(
+            model_id, dtype=torch.bfloat16
+        ).to(self.device)
+        if adapter is not None:
+            self.model = PeftModel.from_pretrained(self.model, adapter)
+        self.model.eval()
+
+    def prepare_inputs(self, images, prompt, image_tokens):
+        conversations = [
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": image},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ]
+            for image in images
+        ]
+        inputs = self.processor.apply_chat_template(
+            conversations,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+            processor_kwargs={"padding": True},
+        )
+        return move_inputs(inputs, self.device)
+
+
+class Gemma4(BaseModel):
+    supports_image_tokens = True
+
+    def __init__(self, model_id, device, adapter=None):
+        super().__init__(model_id, device)
+        self.processor = AutoProcessor.from_pretrained(model_id)
+        self.model = AutoModelForMultimodalLM.from_pretrained(
+            model_id, dtype=torch.bfloat16
+        ).to(self.device)
+        if adapter is not None:
+            self.model = PeftModel.from_pretrained(self.model, adapter)
+        self.model.eval()
+
+    def prepare_inputs(self, images, prompt, image_tokens):
+        conversations = [
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": image},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ]
+            for image in images
+        ]
+        inputs = self.processor.apply_chat_template(
+            conversations,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+            processor_kwargs={
+                "padding": True,
+                "images_kwargs": {"max_soft_tokens": image_tokens},
+            },
+            enable_thinking=False,
+        )
+        return move_inputs(inputs, self.device)
+
+
+class InternVL(BaseModel):
+    def __init__(self, model_id, device, adapter=None):
+        super().__init__(model_id, device)
+        self.processor = AutoProcessor.from_pretrained(model_id)
+        self.model = AutoModelForImageTextToText.from_pretrained(
+            model_id, dtype=torch.bfloat16
+        ).to(self.device)
+        if adapter is not None:
+            self.model = PeftModel.from_pretrained(self.model, adapter)
+        self.model.eval()
+
+    def prepare_inputs(self, images, prompt, image_tokens):
+        conversations = [
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": image},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ]
+            for image in images
+        ]
+        inputs = self.processor.apply_chat_template(
+            conversations,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+            processor_kwargs={"padding": True},
+        )
+        return move_inputs(inputs, self.device)
+
+
+class TestModel(BaseModel):
+    def prepare_inputs(self, images, prompt, image_tokens):
+        return {
+            "input_ids": torch.zeros(
+                (len(images), 1), dtype=torch.long, device=self.device
+            )
+        }
+
+    def generate(self, inputs, max_new_tokens):
+        batch_size = inputs["input_ids"].shape[0]
+        return ["{}"] * batch_size, 0
+
+
+def load_model(model_name, device, adapter):
+    from mllm.config import MODELS
+
+    model_class, model_id = MODELS[model_name]
+    return model_class(model_id, device, adapter)
 
 
 def parse_json(text: str, fields: tuple[str, ...]) -> dict[str, str | None]:

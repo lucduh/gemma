@@ -36,6 +36,10 @@ Return exactly one compact JSON object and nothing else. Include only informatio
 
 Use labels, nearby text, and document layout to associate each value with the correct field. Keep information about different people separate. Preserve the source spelling and formatting. Never infer, translate, or calculate values. Omit missing fields; do not return null, Markdown, or explanations."""
 
+TEST_PROMPT = f"""Return an empty JSON object using these field names:
+
+{FIELD_KEYS_PLACEHOLDER}"""
+
 
 def render_prompt(template: str, fields: tuple[str, ...]) -> str:
     field_keys = "\n".join(f'- "{field}"' for field in fields)

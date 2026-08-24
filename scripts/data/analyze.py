@@ -5,8 +5,7 @@ from pathlib import Path
 import pandas as pd
 from PIL import Image
 
-from mllm.constants import DATA_ROOT
-from mllm.datasets import DATASETS
+from mllm.config import DATA_ROOT, DATASETS
 
 
 def inspect_images(paths: pd.Series, dataset_dir: Path) -> dict:

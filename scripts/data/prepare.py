@@ -3,9 +3,8 @@ import json
 import random
 from pathlib import Path
 
-from mllm.constants import DATA_ROOT
+from mllm.config import DATA_ROOT, DATASETS
 from mllm.dataset_tools import discover_fields, load_samples, samples_to_frame
-from mllm.datasets import DATASETS
 
 
 def main(
