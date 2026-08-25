@@ -5,7 +5,6 @@ from PIL import Image
 from torch.utils.data import Dataset as TorchDataset
 
 from mllm.config import DATASETS
-from mllm.prompts import render_prompt
 
 
 class Dataset(TorchDataset):
@@ -21,7 +20,7 @@ class Dataset(TorchDataset):
             for column in self.samples.columns
             if column not in {"source_index", "image_path"}
         )
-        self.prompt = render_prompt(config.prompt_template, self.fields)
+        self.prompt = config.prompt
 
     def __len__(self) -> int:
         return len(self.samples)

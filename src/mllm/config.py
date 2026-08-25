@@ -13,7 +13,7 @@ from mllm.prompts import (
 @dataclass(frozen=True)
 class DatasetConfig:
     directory: Path
-    prompt_template: str
+    prompt: str
 
 
 DATA_ROOT = Path("/domino/datasets/local/MLLM/data")

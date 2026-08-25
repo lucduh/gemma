@@ -1,11 +1,7 @@
-FIELD_KEYS_PLACEHOLDER = "<DATASET_FIELD_KEYS>"
-
 # Keep dataset prompts together so differences are easy to review.
-BR_PROMPT = f"""Extract structured information from this Brazilian service invoice (NFS-e).
+BR_PROMPT = """Extract structured information from this Brazilian service invoice (NFS-e).
 
-Return exactly one compact JSON object and nothing else. Include only clearly present fields, use only the keys listed below, and make every value a JSON string:
-
-{FIELD_KEYS_PLACEHOLDER}
+Return exactly one compact JSON object and nothing else. Include only clearly present fields, use only the keys described below, and make every value a JSON string.
 
 Field guidance:
 - "numero_da_nota": value labeled "Número da nota", "Nº", "N°", or "Nota" in the invoice header. Remove the label and prefix.
@@ -20,27 +16,16 @@ Field guidance:
 
 Use the layout to keep PRESTADOR/EMITENTE values separate from TOMADOR values. Take identifiers only from explicitly labeled fields. Preserve spelling and numeric formatting except for explicitly requested normalization. Never infer or calculate a value. Omit missing fields; do not return null, Markdown, or explanations."""
 
-KARAPASS_DEATH_PROMPT = f"""Extract the requested structured information from this French death or succession document.
+KARAPASS_DEATH_PROMPT = """Extract the requested structured information from this French death or succession document.
 
-Return exactly one compact JSON object and nothing else. Include only information clearly present in the document, use only the keys listed below, and make every value a JSON string:
-
-{FIELD_KEYS_PLACEHOLDER}
+Return exactly one compact JSON object and nothing else. Include only information clearly present in the document and make every value a JSON string.
 
 Use labels, nearby text, and document layout to associate each value with the correct field. Preserve the source spelling and formatting. Never infer, translate, or calculate values. Omit missing fields; do not return null, Markdown, or explanations."""
 
-KARAPASS_ID_PROMPT = f"""Extract the requested structured information from this French identity or claims document.
+KARAPASS_ID_PROMPT = """Extract the requested structured information from this French identity or claims document.
 
-Return exactly one compact JSON object and nothing else. Include only information clearly present in the document, use only the keys listed below, and make every value a JSON string:
-
-{FIELD_KEYS_PLACEHOLDER}
+Return exactly one compact JSON object and nothing else. Include only information clearly present in the document and make every value a JSON string.
 
 Use labels, nearby text, and document layout to associate each value with the correct field. Keep information about different people separate. Preserve the source spelling and formatting. Never infer, translate, or calculate values. Omit missing fields; do not return null, Markdown, or explanations."""
 
-TEST_PROMPT = f"""Return an empty JSON object using these field names:
-
-{FIELD_KEYS_PLACEHOLDER}"""
-
-
-def render_prompt(template: str, fields: tuple[str, ...]) -> str:
-    field_keys = "\n".join(f'- "{field}"' for field in fields)
-    return template.replace(FIELD_KEYS_PLACEHOLDER, field_keys)
+TEST_PROMPT = "Return an empty JSON object."

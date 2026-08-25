@@ -73,7 +73,7 @@ Configuration and implementation are separated as follows:
 - `src/mllm/config.py` — model paths, dataset paths, and runtime defaults
 - `src/mllm/dataset.py` — Parquet dataset loading
 - `src/mllm/inference.py` — model loading, input preparation, and generation
-- `src/mllm/prompts.py` — dataset-specific prompt templates
+- `src/mllm/prompts.py` — dataset-specific prompts
 
 InternVL uses the Transformers-native `OpenGVLab/InternVL3-8B-hf` checkpoint.
 
