@@ -61,6 +61,8 @@ uv run python scripts/evaluate.py \
   --adapter results/training/gemma3-karapass-id/best
 ```
 
+Evaluation artifacts include per-batch profiling for image loading, preprocessing, prefill, decoding, generation overhead, postprocessing, and end-to-end latency. `image_load_ms` measures the wait for the DataLoader; `end_to_end_ms` starts after a batch is returned and ends when its prediction records are complete. For batches larger than one, latency values describe the whole synchronous batch, while amortized milliseconds per document and documents per second describe throughput. Output filenames include the batch size so batch sweeps do not overwrite each other.
+
 The tiny `TEST` dataset and weight-free `test` model run the inference code on CPU:
 
 ```bash

@@ -42,7 +42,7 @@ def main(
     }
     model.synchronize()
     start = time.perf_counter()
-    texts, _ = model.generate(inputs, max_new_tokens)
+    texts, _, _ = model.generate(inputs, max_new_tokens)
     model.synchronize()
     latency_ms = (time.perf_counter() - start) * 1000
 

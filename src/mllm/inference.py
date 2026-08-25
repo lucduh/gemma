@@ -24,18 +24,60 @@ class BaseModel:
         self.model_id = model_id
         self.device = torch.device(device)
 
-    def generate(self, inputs, max_new_tokens):
+    def generate(self, inputs, max_new_tokens, observer=None):
         input_length = inputs["input_ids"].shape[1]
+        generation_kwargs = {}
+        if observer is not None:
+            generation_kwargs["logits_processor"] = [observer]
+
         with torch.inference_mode():
             output_ids = self.model.generate(
                 **inputs,
                 max_new_tokens=max_new_tokens,
                 do_sample=False,
+                **generation_kwargs,
             )
+        if observer is not None:
+            observer.end()
 
         generated_ids = output_ids[:, input_length:]
+        token_counts, reached_token_limits = self._generation_stats(
+            generated_ids, max_new_tokens
+        )
         texts = self.processor.batch_decode(generated_ids, skip_special_tokens=True)
-        return texts, generated_ids.numel()
+        return texts, token_counts, reached_token_limits
+
+    def _generation_stats(self, generated_ids, max_new_tokens):
+        generation_config = self.model.generation_config
+        eos_token_ids = generation_config.eos_token_id
+        if eos_token_ids is None:
+            eos_token_ids = set()
+        elif isinstance(eos_token_ids, int):
+            eos_token_ids = {eos_token_ids}
+        else:
+            eos_token_ids = set(eos_token_ids)
+        pad_token_id = generation_config.pad_token_id
+
+        token_counts = []
+        reached_token_limits = []
+        for row in generated_ids.tolist():
+            eos_index = next(
+                (index for index, token in enumerate(row) if token in eos_token_ids),
+                None,
+            )
+            if eos_index is not None:
+                count = eos_index + 1
+                reached_limit = False
+            else:
+                count = len(row)
+                if pad_token_id is not None:
+                    while count and row[count - 1] == pad_token_id:
+                        count -= 1
+                reached_limit = count >= max_new_tokens
+            token_counts.append(count)
+            reached_token_limits.append(reached_limit)
+
+        return token_counts, reached_token_limits
 
     def synchronize(self):
         if self.device.type == "cuda":
@@ -45,10 +87,20 @@ class BaseModel:
         if self.device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(self.device)
 
+    def allocated_memory_gb(self):
+        if self.device.type != "cuda":
+            return 0.0
+        return torch.cuda.memory_allocated(self.device) / 1024**3
+
     def peak_memory_gb(self):
         if self.device.type != "cuda":
             return 0.0
         return torch.cuda.max_memory_allocated(self.device) / 1024**3
+
+    def peak_reserved_memory_gb(self):
+        if self.device.type != "cuda":
+            return 0.0
+        return torch.cuda.max_memory_reserved(self.device) / 1024**3
 
 
 class Gemma3(BaseModel):
@@ -170,9 +222,11 @@ class TestModel(BaseModel):
             )
         }
 
-    def generate(self, inputs, max_new_tokens):
+    def generate(self, inputs, max_new_tokens, observer=None):
         batch_size = inputs["input_ids"].shape[0]
-        return ["{}"] * batch_size, 0
+        if observer is not None:
+            observer.end()
+        return ["{}"] * batch_size, [0] * batch_size, [False] * batch_size
 
 
 def load_model(model_name, device, adapter):
