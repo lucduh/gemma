@@ -13,6 +13,7 @@ from mllm.config import (
 )
 from mllm.dataset import Dataset
 from mllm.inference import load_model, parse_json
+from mllm.metrics import values_match
 
 
 def main(
@@ -51,7 +52,7 @@ def main(
         field: {
             "ground_truth": gt[field],
             "prediction": prediction[field],
-            "correct": gt[field] == prediction[field],
+            "correct": values_match(gt[field], prediction[field]),
         }
         for field in dataset.fields
     }

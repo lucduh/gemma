@@ -18,7 +18,7 @@ from mllm.config import (
 )
 from mllm.dataset import Dataset
 from mllm.inference import load_model, parse_json
-from mllm.metrics import calculate_metrics
+from mllm.metrics import calculate_metrics, values_match
 
 
 def main(
@@ -79,7 +79,7 @@ def main(
                 field: {
                     "ground_truth": gt[field],
                     "prediction": prediction[field],
-                    "correct": gt[field] == prediction[field],
+                    "correct": values_match(gt[field], prediction[field]),
                 }
                 for field in dataset.fields
             }
@@ -156,10 +156,10 @@ def main(
         json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8"
     )
 
-    print("\nPer-field strict F1:")
+    print("\nPer-field F1:")
     for field, values in metrics["per_field"].items():
         print(f"  {field}: {values['f1']:.3f}")
-    print(f"\nStrict micro F1: {metrics['micro_f1']:.3f}")
+    print(f"\nMicro F1: {metrics['micro_f1']:.3f}")
     print(f"Document accuracy: {metrics['document_accuracy']:.3f}")
     print(f"Mean latency: {timing_summary['mean_ms_per_document']:.1f} ms/document")
     print(f"Throughput: {timing_summary['documents_per_second']:.2f} documents/s")
