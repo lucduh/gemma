@@ -51,7 +51,7 @@ uv run python scripts/evaluate_gemma4_pooling.py \
   --target-image-tokens 280 --pool-method average --limit 10
 ```
 
-The pooling evaluator reduces tokens after Gemma's vision tower and before its multimodal projector. It supports adaptive average pooling and evenly spaced spatial token selection. Image-token budgets are maxima, so result files record the actual source and target grids for every document. See [`docs/gemma4_pooling_experiment.md`](docs/gemma4_pooling_experiment.md) for the step-by-step comparison.
+The pooling evaluator reduces tokens after Gemma's vision tower and before its multimodal projector. It supports adaptive average pooling, evenly spaced spatial token selection, and local similarity-based token merging. Image-token budgets are maxima, so result files record the actual source and target grids for every document. See [`docs/gemma4_pooling_experiment.md`](docs/gemma4_pooling_experiment.md) for the step-by-step comparison.
 
 ```bash
 # Inspect one prediction.

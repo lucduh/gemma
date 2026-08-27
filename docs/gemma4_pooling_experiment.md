@@ -47,9 +47,17 @@ uv run python scripts/evaluate_gemma4_pooling.py \
   --target-image-tokens 280 \
   --pool-method spatial-select \
   --limit 10
+
+# Merge nearby tokens with similar embeddings.
+uv run python scripts/evaluate_gemma4_pooling.py \
+  --dataset BR \
+  --source-image-tokens 1120 \
+  --target-image-tokens 560 \
+  --pool-method similarity-merge \
+  --limit 10
 ```
 
-The token budgets are maxima. Document aspect ratio determines the actual source and target token counts. `average` aggregates each spatial region, while `spatial-select` preserves one evenly spaced token per region without modifying its embedding.
+The token budgets are maxima. Document aspect ratio determines the actual source and target token counts. `average` aggregates each spatial region, `spatial-select` preserves one evenly spaced token per region, and `similarity-merge` performs local cosine-similarity matching before restoring spatial order.
 
 ## 3. Compare results
 
@@ -59,6 +67,7 @@ Results are saved under `results/evaluation/`. For a ten-document BR run, the fi
 gemma4-e4b_manual_BR_test_280imgtok_n10.json
 gemma4-e4b_pool_average_1120to280_BR_test_n10.json
 gemma4-e4b_pool_spatial-select_1120to280_BR_test_n10.json
+gemma4-e4b_pool_similarity-merge_1120to560_BR_test_n10.json
 ```
 
 Compare these fields:

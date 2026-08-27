@@ -273,3 +273,92 @@ def spatial_select(
     )
     selected = grid[rows[:, None], columns[None, :]]
     return selected.reshape(target_height * target_width, -1)
+
+
+def similarity_merge(
+    tokens: torch.Tensor,
+    source_grid: tuple[int, int],
+    target_grid: tuple[int, int],
+    local_neighbors: int = 4,
+) -> torch.Tensor:
+    validate_grid(tokens, source_grid, target_grid)
+    if local_neighbors <= 0:
+        raise ValueError("local_neighbors must be greater than zero")
+
+    source_height, source_width = source_grid
+    target_count = target_grid[0] * target_grid[1]
+    original_dtype = tokens.dtype
+    positions = torch.stack(
+        torch.meshgrid(
+            torch.arange(source_height, device=tokens.device),
+            torch.arange(source_width, device=tokens.device),
+            indexing="ij",
+        ),
+        dim=-1,
+    ).reshape(-1, 2)
+    positions = positions.float()
+    weights = torch.ones(tokens.shape[0], 1, device=tokens.device)
+
+    while tokens.shape[0] > target_count:
+        source_tokens = tokens[::2]
+        destination_tokens = tokens[1::2]
+        source_positions = positions[::2]
+        destination_positions = positions[1::2]
+        source_weights = weights[::2]
+        destination_weights = weights[1::2]
+
+        merge_count = min(tokens.shape[0] - target_count, destination_tokens.shape[0])
+        distances = torch.cdist(source_positions, destination_positions)
+        neighbor_count = min(local_neighbors, destination_tokens.shape[0])
+        neighbors = distances.topk(neighbor_count, dim=1, largest=False).indices
+
+        normalized_sources = F.normalize(source_tokens.float(), dim=-1)
+        normalized_destinations = F.normalize(destination_tokens.float(), dim=-1)
+        neighbor_features = normalized_destinations[neighbors]
+        neighbor_similarities = (
+            normalized_sources[:, None, :] * neighbor_features
+        ).sum(dim=-1)
+        best_neighbor = neighbor_similarities.argmax(dim=1, keepdim=True)
+        match_scores = neighbor_similarities.gather(1, best_neighbor).squeeze(1)
+        matched_destinations = neighbors.gather(1, best_neighbor).squeeze(1)
+
+        merged_sources = match_scores.topk(merge_count).indices
+        merge_mask = torch.zeros(
+            source_tokens.shape[0], dtype=torch.bool, device=tokens.device
+        )
+        merge_mask[merged_sources] = True
+        destination_indices = matched_destinations[merged_sources]
+
+        destination_sums = destination_tokens.float() * destination_weights
+        destination_position_sums = destination_positions * destination_weights
+        destination_sums.index_add_(
+            0,
+            destination_indices,
+            source_tokens[merged_sources].float() * source_weights[merged_sources],
+        )
+        destination_position_sums.index_add_(
+            0,
+            destination_indices,
+            source_positions[merged_sources] * source_weights[merged_sources],
+        )
+        destination_weights.index_add_(
+            0, destination_indices, source_weights[merged_sources]
+        )
+        destination_tokens = destination_sums / destination_weights
+        destination_positions = destination_position_sums / destination_weights
+
+        tokens = torch.cat(
+            [source_tokens[~merge_mask].float(), destination_tokens], dim=0
+        )
+        positions = torch.cat(
+            [source_positions[~merge_mask], destination_positions], dim=0
+        )
+        weights = torch.cat([source_weights[~merge_mask], destination_weights], dim=0)
+        spatial_order = torch.argsort(
+            positions[:, 0] * (source_width + 1) + positions[:, 1]
+        )
+        tokens = tokens[spatial_order]
+        positions = positions[spatial_order]
+        weights = weights[spatial_order]
+
+    return tokens.to(original_dtype)

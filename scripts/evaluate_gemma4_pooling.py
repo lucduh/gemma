@@ -26,6 +26,7 @@ from mllm.gemma4_manual import (
     prefill,
     prepare_inputs,
     project_vision,
+    similarity_merge,
     spatial_average_pool,
     spatial_select,
     target_soft_grid,
@@ -37,7 +38,7 @@ MODEL_NAME = "gemma4-e4b"
 DEFAULT_SOURCE_IMAGE_TOKENS = 1120
 DEFAULT_TARGET_IMAGE_TOKENS = 280
 DEFAULT_POOL_METHOD = "average"
-POOL_METHODS = ("average", "spatial-select")
+POOL_METHODS = ("average", "spatial-select", "similarity-merge")
 DEFAULT_LIMIT = 10
 STAGES = (
     "image_load_ms",
@@ -107,6 +108,8 @@ def run_inference(
         pooled_tokens = spatial_average_pool(vision_tokens, source_grid, target_grid)
     elif pool_method == "spatial-select":
         pooled_tokens = spatial_select(vision_tokens, source_grid, target_grid)
+    elif pool_method == "similarity-merge":
+        pooled_tokens = similarity_merge(vision_tokens, source_grid, target_grid)
     else:
         raise ValueError(f"Unknown pool method: {pool_method}")
     synchronize(device)

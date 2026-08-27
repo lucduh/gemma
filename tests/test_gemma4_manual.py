@@ -4,6 +4,7 @@ import torch
 
 from mllm.gemma4_manual import (
     compact_image_placeholders,
+    similarity_merge,
     spatial_average_pool,
     spatial_select,
 )
@@ -47,6 +48,37 @@ class SpatialSelectTest(unittest.TestCase):
     def test_rejects_larger_target_grid(self):
         with self.assertRaisesRegex(ValueError, "cannot be larger"):
             spatial_select(torch.zeros(8, 4), (2, 4), (3, 4))
+
+
+class SimilarityMergeTest(unittest.TestCase):
+    def test_merges_similar_local_tokens(self):
+        tokens = torch.tensor(
+            [
+                [1.0, 0.0],
+                [1.0, 0.01],
+                [0.0, 1.0],
+                [0.01, 1.0],
+            ]
+        )
+
+        merged = similarity_merge(tokens, (2, 2), (1, 2))
+
+        expected = torch.tensor([[1.0, 0.005], [0.005, 1.0]])
+        self.assertTrue(torch.allclose(merged, expected))
+
+    def test_reaches_exact_target_count(self):
+        tokens = torch.randn(5 * 7, 4)
+
+        merged = similarity_merge(tokens, (5, 7), (2, 4))
+
+        self.assertEqual(merged.shape, (8, 4))
+
+    def test_preserves_tokens_for_identity_merge(self):
+        tokens = torch.randn(3 * 5, 4)
+
+        merged = similarity_merge(tokens, (3, 5), (3, 5))
+
+        self.assertTrue(torch.equal(merged, tokens))
 
 
 class CompactImagePlaceholdersTest(unittest.TestCase):
