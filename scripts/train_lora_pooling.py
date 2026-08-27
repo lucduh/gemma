@@ -13,6 +13,7 @@ from mllm.config import (
     DEFAULT_GRADIENT_ACCUMULATION,
     DEFAULT_LEARNING_RATE,
     DEFAULT_SEED,
+    DEFAULT_TRAIN_BATCH_SIZE,
     DEFAULT_VALIDATION_FRACTION,
     LORA_ALPHA,
     LORA_DROPOUT,
@@ -159,11 +160,81 @@ def prepare_example(
     }
 
 
+def make_batches(samples, batch_size):
+    for start in range(0, len(samples), batch_size):
+        yield samples[start : start + batch_size]
+
+
+def batch_examples(examples, padding_side):
+    max_length = max(example["attention_mask"].shape[1] for example in examples)
+    padding_values = {
+        "inputs_embeds": 0,
+        "per_layer_inputs": 0,
+        "attention_mask": 0,
+        "mm_token_type_ids": 0,
+        "labels": -100,
+    }
+    batch = {}
+    for key, padding_value in padding_values.items():
+        values = [example[key] for example in examples]
+        if values[0] is None:
+            batch[key] = None
+            continue
+
+        padded = []
+        for value in values:
+            padding_length = max_length - value.shape[1]
+            padding_shape = (1, padding_length, *value.shape[2:])
+            padding = torch.full(
+                padding_shape,
+                padding_value,
+                dtype=value.dtype,
+                device=value.device,
+            )
+            if padding_side == "left":
+                value = torch.cat([padding, value], dim=1)
+            else:
+                value = torch.cat([value, padding], dim=1)
+            padded.append(value)
+        batch[key] = torch.cat(padded, dim=0)
+
+    batch["use_cache"] = False
+    batch["return_dict"] = True
+    return batch
+
+
+def prepare_batch(
+    dataset,
+    samples,
+    processor,
+    model,
+    device,
+    source_image_tokens,
+    target_image_tokens,
+    pool_method,
+):
+    examples = [
+        prepare_example(
+            dataset,
+            index,
+            processor,
+            model,
+            device,
+            source_image_tokens,
+            target_image_tokens,
+            pool_method,
+        )
+        for index in samples
+    ]
+    return batch_examples(examples, processor.tokenizer.padding_side)
+
+
 def validation_loss(
     trained_model,
     base_model,
     dataset,
     samples,
+    batch_size,
     processor,
     device,
     source_image_tokens,
@@ -172,11 +243,12 @@ def validation_loss(
 ):
     trained_model.eval()
     losses = []
+    batches = list(make_batches(samples, batch_size))
     with torch.inference_mode():
-        for index in tqdm(samples, desc="validation", leave=False):
-            inputs = prepare_example(
+        for batch in tqdm(batches, desc="validation", leave=False):
+            inputs = prepare_batch(
                 dataset,
-                index,
+                batch,
                 processor,
                 base_model,
                 device,
@@ -198,6 +270,7 @@ def main(
     pool_method: str,
     epochs: int,
     learning_rate: float,
+    batch_size: int,
     gradient_accumulation: int,
     validation_fraction: float,
     seed: int,
@@ -262,11 +335,12 @@ def main(
         optimizer.zero_grad()
         losses = []
 
-        progress = tqdm(training_samples, desc=f"epoch {epoch}/{epochs}")
-        for step, index in enumerate(progress, start=1):
-            inputs = prepare_example(
+        batches = list(make_batches(training_samples, batch_size))
+        progress = tqdm(batches, desc=f"epoch {epoch}/{epochs}")
+        for step, batch in enumerate(progress, start=1):
+            inputs = prepare_batch(
                 dataset,
-                index,
+                batch,
                 processor,
                 base_model,
                 torch_device,
@@ -278,7 +352,7 @@ def main(
             (loss / gradient_accumulation).backward()
             losses.append(loss.item())
 
-            if step % gradient_accumulation == 0 or step == len(training_samples):
+            if step % gradient_accumulation == 0 or step == len(batches):
                 optimizer.step()
                 optimizer.zero_grad()
             progress.set_postfix(loss=f"{loss.item():.3f}")
@@ -289,6 +363,7 @@ def main(
             base_model,
             dataset,
             validation_samples,
+            batch_size,
             processor,
             torch_device,
             source_image_tokens,
@@ -317,9 +392,9 @@ def main(
         "pool_method": pool_method,
         "epochs": epochs,
         "learning_rate": learning_rate,
-        "batch_size": 1,
+        "batch_size": batch_size,
         "gradient_accumulation": gradient_accumulation,
-        "effective_batch_size": gradient_accumulation,
+        "effective_batch_size": batch_size * gradient_accumulation,
         "seed": seed,
         "device": str(torch_device),
         "lora": {"r": LORA_R, "alpha": LORA_ALPHA, "dropout": LORA_DROPOUT},
@@ -349,6 +424,7 @@ def parse_args():
     )
     parser.add_argument("--epochs", type=int, default=DEFAULT_EPOCHS)
     parser.add_argument("--learning-rate", type=float, default=DEFAULT_LEARNING_RATE)
+    parser.add_argument("--batch-size", type=int, default=DEFAULT_TRAIN_BATCH_SIZE)
     parser.add_argument(
         "--gradient-accumulation",
         type=int,

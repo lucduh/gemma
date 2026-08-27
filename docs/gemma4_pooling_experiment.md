@@ -92,7 +92,7 @@ uv run python scripts/train_lora.py \
   --dataset BR \
   --run-name gemma4-e4b-BR-native560 \
   --image-tokens 560 \
-  --batch-size 1
+  --batch-size 4
 ```
 
 Evaluate its best adapter:
@@ -114,7 +114,8 @@ uv run python scripts/train_lora_pooling.py \
   --run-name gemma4-e4b-BR-select1120to560 \
   --source-image-tokens 1120 \
   --target-image-tokens 560 \
-  --pool-method spatial-select
+  --pool-method spatial-select \
+  --batch-size 4
 ```
 
 Evaluate the pooled adapter using the same reduction configuration:
@@ -129,4 +130,4 @@ uv run python scripts/evaluate_gemma4_pooling.py \
   --limit 10
 ```
 
-The pooled training script always uses batch size 1 and freezes the vision encoder, projector, and fixed reducer. Only language-model LoRA parameters are trained.
+The pooled training script supports configurable training batches and freezes the vision encoder, projector, and fixed reducer. Only language-model LoRA parameters are trained. Reduce `--batch-size` and increase `--gradient-accumulation` if GPU memory is limited.
