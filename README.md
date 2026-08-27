@@ -38,6 +38,21 @@ uv run python scripts/data/analyze.py --dataset BR
 
 ## Run inference and training
 
+The batch-size-1 Gemma 4 E4B experiments expose image encoding, LLM prefill, and greedy decoding as separate stages. Both commands evaluate 10 images by default; use `--limit` to change the sample count.
+
+```bash
+# Native 280-token-budget baseline with manual decoding.
+uv run python scripts/evaluate_gemma4_manual.py \
+  --dataset BR --image-tokens 280 --limit 10
+
+# Encode at the 1120-token budget, then pool to the native 280-budget grid.
+uv run python scripts/evaluate_gemma4_pooling.py \
+  --dataset BR --source-image-tokens 1120 \
+  --target-image-tokens 280 --limit 10
+```
+
+The pooling evaluator applies adaptive spatial average pooling after Gemma's vision tower and before its multimodal projector. Image-token budgets are maxima, so result files record the actual source and target grids for every document.
+
 ```bash
 # Inspect one prediction.
 uv run python scripts/debug_prediction.py \
