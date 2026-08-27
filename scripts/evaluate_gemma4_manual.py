@@ -18,7 +18,6 @@ from mllm.config import (
 )
 from mllm.dataset import Dataset
 from mllm.gemma4_manual import (
-    SUPPORTED_IMAGE_TOKEN_BUDGETS,
     build_llm_inputs,
     encode_vision,
     encoded_soft_grid,
