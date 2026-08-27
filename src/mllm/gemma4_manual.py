@@ -217,11 +217,11 @@ def encoded_soft_grid(
     )
 
 
-def spatial_average_pool(
+def validate_grid(
     tokens: torch.Tensor,
     source_grid: tuple[int, int],
     target_grid: tuple[int, int],
-) -> torch.Tensor:
+) -> None:
     source_height, source_width = source_grid
     target_height, target_width = target_grid
     if tokens.shape[0] != source_height * source_width:
@@ -229,9 +229,47 @@ def spatial_average_pool(
             f"Token count {tokens.shape[0]} does not match source grid "
             f"{source_height}x{source_width}"
         )
+    if target_height <= 0 or target_width <= 0:
+        raise ValueError("Target grid dimensions must be greater than zero")
+    if target_height > source_height or target_width > source_width:
+        raise ValueError("Target grid cannot be larger than source grid")
+
+
+def spatial_average_pool(
+    tokens: torch.Tensor,
+    source_grid: tuple[int, int],
+    target_grid: tuple[int, int],
+) -> torch.Tensor:
+    validate_grid(tokens, source_grid, target_grid)
+    source_height, source_width = source_grid
+    target_height, target_width = target_grid
 
     original_dtype = tokens.dtype
     grid = tokens.reshape(source_height, source_width, -1)
     grid = grid.permute(2, 0, 1).unsqueeze(0).float()
     pooled = F.adaptive_avg_pool2d(grid, (target_height, target_width))
     return pooled.flatten(2).transpose(1, 2).squeeze(0).to(original_dtype)
+
+
+def spatial_select(
+    tokens: torch.Tensor,
+    source_grid: tuple[int, int],
+    target_grid: tuple[int, int],
+) -> torch.Tensor:
+    validate_grid(tokens, source_grid, target_grid)
+    source_height, source_width = source_grid
+    target_height, target_width = target_grid
+    grid = tokens.reshape(source_height, source_width, -1)
+
+    rows = (
+        (2 * torch.arange(target_height, device=tokens.device) + 1)
+        * source_height
+        // (2 * target_height)
+    )
+    columns = (
+        (2 * torch.arange(target_width, device=tokens.device) + 1)
+        * source_width
+        // (2 * target_width)
+    )
+    selected = grid[rows[:, None], columns[None, :]]
+    return selected.reshape(target_height * target_width, -1)

@@ -5,6 +5,7 @@ import torch
 from mllm.gemma4_manual import (
     compact_image_placeholders,
     spatial_average_pool,
+    spatial_select,
 )
 
 
@@ -26,6 +27,26 @@ class SpatialAveragePoolTest(unittest.TestCase):
     def test_rejects_incorrect_source_grid(self):
         with self.assertRaisesRegex(ValueError, "does not match source grid"):
             spatial_average_pool(torch.zeros(10, 4), (2, 4), (1, 2))
+
+
+class SpatialSelectTest(unittest.TestCase):
+    def test_selects_region_centers(self):
+        tokens = torch.arange(4 * 6, dtype=torch.float32).reshape(4 * 6, 1)
+
+        selected = spatial_select(tokens, (4, 6), (2, 3))
+
+        self.assertEqual(selected[:, 0].tolist(), [7, 9, 11, 19, 21, 23])
+
+    def test_preserves_tokens_for_identity_selection(self):
+        tokens = torch.arange(3 * 5 * 2, dtype=torch.float32).reshape(3 * 5, 2)
+
+        selected = spatial_select(tokens, (3, 5), (3, 5))
+
+        self.assertTrue(torch.equal(selected, tokens))
+
+    def test_rejects_larger_target_grid(self):
+        with self.assertRaisesRegex(ValueError, "cannot be larger"):
+            spatial_select(torch.zeros(8, 4), (2, 4), (3, 4))
 
 
 class CompactImagePlaceholdersTest(unittest.TestCase):

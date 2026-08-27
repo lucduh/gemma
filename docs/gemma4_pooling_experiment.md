@@ -32,15 +32,24 @@ uv run python scripts/evaluate_gemma4_manual.py \
   --image-tokens 280 \
   --limit 10
 
-# Encode at the 1120-token budget and pool to the native 280-budget grid.
+# Encode at the 1120-token budget and average-pool to the 280-budget grid.
 uv run python scripts/evaluate_gemma4_pooling.py \
   --dataset BR \
   --source-image-tokens 1120 \
   --target-image-tokens 280 \
+  --pool-method average \
+  --limit 10
+
+# Select one intact token near the center of each spatial region.
+uv run python scripts/evaluate_gemma4_pooling.py \
+  --dataset BR \
+  --source-image-tokens 1120 \
+  --target-image-tokens 280 \
+  --pool-method spatial-select \
   --limit 10
 ```
 
-The token budgets are maxima. Document aspect ratio determines the actual source and target token counts.
+The token budgets are maxima. Document aspect ratio determines the actual source and target token counts. `average` aggregates each spatial region, while `spatial-select` preserves one evenly spaced token per region without modifying its embedding.
 
 ## 3. Compare results
 
@@ -48,7 +57,8 @@ Results are saved under `results/evaluation/`. For a ten-document BR run, the fi
 
 ```text
 gemma4-e4b_manual_BR_test_280imgtok_n10.json
-gemma4-e4b_pool_1120to280_BR_test_n10.json
+gemma4-e4b_pool_average_1120to280_BR_test_n10.json
+gemma4-e4b_pool_spatial-select_1120to280_BR_test_n10.json
 ```
 
 Compare these fields:

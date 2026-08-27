@@ -27,6 +27,7 @@ from mllm.gemma4_manual import (
     prepare_inputs,
     project_vision,
     spatial_average_pool,
+    spatial_select,
     target_soft_grid,
 )
 from mllm.inference import parse_json
@@ -35,6 +36,8 @@ from mllm.metrics import calculate_metrics, values_match
 MODEL_NAME = "gemma4-e4b"
 DEFAULT_SOURCE_IMAGE_TOKENS = 1120
 DEFAULT_TARGET_IMAGE_TOKENS = 280
+DEFAULT_POOL_METHOD = "average"
+POOL_METHODS = ("average", "spatial-select")
 DEFAULT_LIMIT = 10
 STAGES = (
     "image_load_ms",
@@ -68,6 +71,7 @@ def run_inference(
     prompt,
     source_image_tokens,
     target_image_tokens,
+    pool_method,
     max_new_tokens,
 ):
     device = next(model.parameters()).device
@@ -99,7 +103,12 @@ def run_inference(
     timings["vision_encoder_ms"] = elapsed_ms(start)
 
     start = time.perf_counter()
-    pooled_tokens = spatial_average_pool(vision_tokens, source_grid, target_grid)
+    if pool_method == "average":
+        pooled_tokens = spatial_average_pool(vision_tokens, source_grid, target_grid)
+    elif pool_method == "spatial-select":
+        pooled_tokens = spatial_select(vision_tokens, source_grid, target_grid)
+    else:
+        raise ValueError(f"Unknown pool method: {pool_method}")
     synchronize(device)
     timings["pooling_ms"] = elapsed_ms(start)
 
@@ -172,6 +181,7 @@ def main(
     split: str,
     source_image_tokens: int,
     target_image_tokens: int,
+    pool_method: str,
     max_new_tokens: int,
     warmup: int,
     limit: int,
@@ -201,6 +211,7 @@ def main(
                     dataset.prompt,
                     source_image_tokens,
                     target_image_tokens,
+                    pool_method,
                     max_new_tokens,
                 )
 
@@ -225,6 +236,7 @@ def main(
                 dataset.prompt,
                 source_image_tokens,
                 target_image_tokens,
+                pool_method,
                 max_new_tokens,
             )
 
@@ -280,7 +292,7 @@ def main(
             "data_path": str(dataset.path),
             "fields": list(dataset.fields),
             "batch_size": 1,
-            "pool_method": "adaptive_average",
+            "pool_method": pool_method,
             "source_image_tokens": source_image_tokens,
             "target_image_tokens": target_image_tokens,
             "max_new_tokens": max_new_tokens,
@@ -296,8 +308,8 @@ def main(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     output = output_dir / (
-        f"{MODEL_NAME}_pool_{source_image_tokens}to{target_image_tokens}_"
-        f"{dataset_name}_{split}_n{document_count}.json"
+        f"{MODEL_NAME}_pool_{pool_method}_{source_image_tokens}to"
+        f"{target_image_tokens}_{dataset_name}_{split}_n{document_count}.json"
     )
     output.write_text(
         json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -325,6 +337,9 @@ def parse_args():
     )
     parser.add_argument(
         "--target-image-tokens", type=int, default=DEFAULT_TARGET_IMAGE_TOKENS
+    )
+    parser.add_argument(
+        "--pool-method", choices=POOL_METHODS, default=DEFAULT_POOL_METHOD
     )
     parser.add_argument("--max-new-tokens", type=int, default=DEFAULT_MAX_NEW_TOKENS)
     parser.add_argument("--warmup", type=int, default=DEFAULT_WARMUP)

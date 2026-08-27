@@ -48,10 +48,10 @@ uv run python scripts/evaluate_gemma4_manual.py \
 # Encode at the 1120-token budget, then pool to the native 280-budget grid.
 uv run python scripts/evaluate_gemma4_pooling.py \
   --dataset BR --source-image-tokens 1120 \
-  --target-image-tokens 280 --limit 10
+  --target-image-tokens 280 --pool-method average --limit 10
 ```
 
-The pooling evaluator applies adaptive spatial average pooling after Gemma's vision tower and before its multimodal projector. Image-token budgets are maxima, so result files record the actual source and target grids for every document. See [`docs/gemma4_pooling_experiment.md`](docs/gemma4_pooling_experiment.md) for the step-by-step comparison.
+The pooling evaluator reduces tokens after Gemma's vision tower and before its multimodal projector. It supports adaptive average pooling and evenly spaced spatial token selection. Image-token budgets are maxima, so result files record the actual source and target grids for every document. See [`docs/gemma4_pooling_experiment.md`](docs/gemma4_pooling_experiment.md) for the step-by-step comparison.
 
 ```bash
 # Inspect one prediction.
