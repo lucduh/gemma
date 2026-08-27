@@ -9,6 +9,7 @@ from tqdm import tqdm
 from mllm.config import (
     DATASETS,
     DEFAULT_EPOCHS,
+    DEFAULT_GEMMA4_IMAGE_TOKENS,
     DEFAULT_GRADIENT_ACCUMULATION,
     DEFAULT_LEARNING_RATE,
     DEFAULT_SEED,
@@ -29,20 +30,20 @@ def make_target(gt, fields):
     return json.dumps(target, ensure_ascii=False, separators=(",", ":"))
 
 
-def apply_template(processor, messages, add_generation_prompt):
-    extra = (
-        {"enable_thinking": False}
-        if processor.__class__.__name__ == "Gemma4Processor"
-        else {}
-    )
+def apply_template(processor, messages, add_generation_prompt, image_tokens):
+    is_gemma4 = processor.__class__.__name__ == "Gemma4Processor"
+    processor_kwargs = {"padding": True}
+    if is_gemma4:
+        processor_kwargs["images_kwargs"] = {"max_soft_tokens": image_tokens}
+
     return processor.apply_chat_template(
         messages,
         add_generation_prompt=add_generation_prompt,
         tokenize=True,
         return_dict=True,
         return_tensors="pt",
-        processor_kwargs={"padding": True},
-        **extra,
+        processor_kwargs=processor_kwargs,
+        **({"enable_thinking": False} if is_gemma4 else {}),
     )
 
 
@@ -51,7 +52,7 @@ def make_batches(samples, batch_size):
         yield samples[start : start + batch_size]
 
 
-def prepare_batch(dataset, samples, processor, device):
+def prepare_batch(dataset, samples, processor, device, image_tokens):
     batch = [dataset[index] for index in samples]
     images, _, gts = zip(*batch)
     users = [
@@ -76,8 +77,15 @@ def prepare_batch(dataset, samples, processor, device):
         for user, gt in zip(users, gts, strict=True)
     ]
 
-    prompt_inputs = apply_template(processor, prompts, add_generation_prompt=True)
-    inputs = apply_template(processor, conversations, add_generation_prompt=False)
+    prompt_inputs = apply_template(
+        processor, prompts, add_generation_prompt=True, image_tokens=image_tokens
+    )
+    inputs = apply_template(
+        processor,
+        conversations,
+        add_generation_prompt=False,
+        image_tokens=image_tokens,
+    )
 
     labels = inputs["input_ids"].clone()
     labels[inputs["attention_mask"] == 0] = -100
@@ -96,14 +104,16 @@ def prepare_batch(dataset, samples, processor, device):
     return inputs
 
 
-def get_validation_loss(model, dataset, samples, batch_size, processor, device):
+def get_validation_loss(
+    model, dataset, samples, batch_size, processor, device, image_tokens
+):
     model.eval()
     losses = []
     with torch.inference_mode():
         for batch in tqdm(
             list(make_batches(samples, batch_size)), desc="validation", leave=False
         ):
-            inputs = prepare_batch(dataset, batch, processor, device)
+            inputs = prepare_batch(dataset, batch, processor, device, image_tokens)
             losses.append(model(**inputs).loss.item())
     return sum(losses) / len(losses)
 
@@ -118,6 +128,7 @@ def main(
     learning_rate: float,
     batch_size: int,
     gradient_accumulation: int,
+    image_tokens: int,
     validation_fraction: float,
     seed: int,
 ):
@@ -179,7 +190,9 @@ def main(
         batches = list(make_batches(training_samples, batch_size))
         progress = tqdm(batches, desc=f"epoch {epoch}/{epochs}")
         for step, batch in enumerate(progress, start=1):
-            inputs = prepare_batch(dataset, batch, processor, model.device)
+            inputs = prepare_batch(
+                dataset, batch, processor, model.device, image_tokens
+            )
             loss = trained_model(**inputs).loss
             (loss / gradient_accumulation).backward()
             losses.append(loss.item())
@@ -197,6 +210,7 @@ def main(
             batch_size,
             processor,
             model.device,
+            image_tokens,
         )
         history.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss})
         print(f"Epoch {epoch}: train_loss={train_loss:.4f} val_loss={val_loss:.4f}")
@@ -223,6 +237,7 @@ def main(
         "batch_size": batch_size,
         "gradient_accumulation": gradient_accumulation,
         "effective_batch_size": batch_size * gradient_accumulation,
+        "image_tokens": image_tokens if model.supports_image_tokens else None,
         "seed": seed,
         "device": str(model.device),
         "lora": {"r": LORA_R, "alpha": LORA_ALPHA, "dropout": LORA_DROPOUT},
@@ -248,6 +263,7 @@ def parse_args():
         type=int,
         default=DEFAULT_GRADIENT_ACCUMULATION,
     )
+    parser.add_argument("--image-tokens", type=int, default=DEFAULT_GEMMA4_IMAGE_TOKENS)
     parser.add_argument(
         "--validation-fraction", type=float, default=DEFAULT_VALIDATION_FRACTION
     )

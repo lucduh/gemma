@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 import torch
+from peft import PeftModel
 from tqdm import tqdm
 from transformers import AutoModelForMultimodalLM, AutoProcessor
 
@@ -17,6 +18,7 @@ from mllm.config import (
 )
 from mllm.dataset import Dataset
 from mllm.gemma4_manual import (
+    POOL_METHODS,
     build_llm_inputs,
     compact_image_placeholders,
     encode_vision,
@@ -26,9 +28,7 @@ from mllm.gemma4_manual import (
     prefill,
     prepare_inputs,
     project_vision,
-    similarity_merge,
-    spatial_average_pool,
-    spatial_select,
+    reduce_visual_tokens,
     target_soft_grid,
 )
 from mllm.inference import parse_json
@@ -38,7 +38,6 @@ MODEL_NAME = "gemma4-e4b"
 DEFAULT_SOURCE_IMAGE_TOKENS = 1120
 DEFAULT_TARGET_IMAGE_TOKENS = 280
 DEFAULT_POOL_METHOD = "average"
-POOL_METHODS = ("average", "spatial-select", "similarity-merge")
 DEFAULT_LIMIT = 10
 STAGES = (
     "image_load_ms",
@@ -104,14 +103,9 @@ def run_inference(
     timings["vision_encoder_ms"] = elapsed_ms(start)
 
     start = time.perf_counter()
-    if pool_method == "average":
-        pooled_tokens = spatial_average_pool(vision_tokens, source_grid, target_grid)
-    elif pool_method == "spatial-select":
-        pooled_tokens = spatial_select(vision_tokens, source_grid, target_grid)
-    elif pool_method == "similarity-merge":
-        pooled_tokens = similarity_merge(vision_tokens, source_grid, target_grid)
-    else:
-        raise ValueError(f"Unknown pool method: {pool_method}")
+    pooled_tokens = reduce_visual_tokens(
+        vision_tokens, source_grid, target_grid, pool_method
+    )
     synchronize(device)
     timings["pooling_ms"] = elapsed_ms(start)
 
@@ -186,6 +180,7 @@ def main(
     target_image_tokens: int,
     pool_method: str,
     max_new_tokens: int,
+    adapter: Path | None,
     warmup: int,
     limit: int,
     output_dir: Path,
@@ -201,6 +196,8 @@ def main(
     model = AutoModelForMultimodalLM.from_pretrained(model_id, dtype=torch.bfloat16).to(
         torch_device
     )
+    if adapter is not None:
+        model = PeftModel.from_pretrained(model, adapter).merge_and_unload()
     model.eval()
 
     if warmup:
@@ -290,6 +287,7 @@ def main(
         "config": {
             "model": MODEL_NAME,
             "model_path": str(model_id),
+            "adapter": str(adapter) if adapter else None,
             "dataset": dataset_name,
             "split": split,
             "data_path": str(dataset.path),
@@ -310,8 +308,9 @@ def main(
     }
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    variant = f"{adapter.parent.name}_" if adapter else ""
     output = output_dir / (
-        f"{MODEL_NAME}_pool_{pool_method}_{source_image_tokens}to"
+        f"{MODEL_NAME}_{variant}pool_{pool_method}_{source_image_tokens}to"
         f"{target_image_tokens}_{dataset_name}_{split}_n{document_count}.json"
     )
     output.write_text(
@@ -345,6 +344,7 @@ def parse_args():
         "--pool-method", choices=POOL_METHODS, default=DEFAULT_POOL_METHOD
     )
     parser.add_argument("--max-new-tokens", type=int, default=DEFAULT_MAX_NEW_TOKENS)
+    parser.add_argument("--adapter", type=Path)
     parser.add_argument("--warmup", type=int, default=DEFAULT_WARMUP)
     parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
     parser.add_argument("--output-dir", type=Path, default=EVALUATION_RESULTS_DIR)

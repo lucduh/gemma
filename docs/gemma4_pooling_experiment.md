@@ -81,3 +81,52 @@ Compare these fields:
 - per-document visual grids and token counts under `timing.documents`
 
 The pooling run still pays the full 1120-budget vision-encoder cost. Its expected savings are in LLM prefill and visual-token KV-cache usage.
+
+## 4. LoRA comparison
+
+Train the native 560-token-budget baseline:
+
+```bash
+uv run python scripts/train_lora.py \
+  --model gemma4-e4b \
+  --dataset BR \
+  --run-name gemma4-e4b-BR-native560 \
+  --image-tokens 560 \
+  --batch-size 1
+```
+
+Evaluate its best adapter:
+
+```bash
+uv run python scripts/evaluate.py \
+  --model gemma4-e4b \
+  --dataset BR \
+  --image-tokens 560 \
+  --adapter results/training/gemma4-e4b-BR-native560/best \
+  --limit 10
+```
+
+Train LoRA with fixed 1120-to-560 spatial selection:
+
+```bash
+uv run python scripts/train_lora_pooling.py \
+  --dataset BR \
+  --run-name gemma4-e4b-BR-select1120to560 \
+  --source-image-tokens 1120 \
+  --target-image-tokens 560 \
+  --pool-method spatial-select
+```
+
+Evaluate the pooled adapter using the same reduction configuration:
+
+```bash
+uv run python scripts/evaluate_gemma4_pooling.py \
+  --dataset BR \
+  --source-image-tokens 1120 \
+  --target-image-tokens 560 \
+  --pool-method spatial-select \
+  --adapter results/training/gemma4-e4b-BR-select1120to560/best \
+  --limit 10
+```
+
+The pooled training script always uses batch size 1 and freezes the vision encoder, projector, and fixed reducer. Only language-model LoRA parameters are trained.

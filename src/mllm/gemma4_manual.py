@@ -5,6 +5,7 @@ from transformers.models.gemma4.image_processing_gemma4 import (
 )
 
 SUPPORTED_IMAGE_TOKEN_BUDGETS = (70, 140, 280, 560, 1120)
+POOL_METHODS = ("average", "spatial-select", "similarity-merge")
 
 
 def prepare_inputs(processor, image, prompt: str, image_tokens: int):
@@ -362,3 +363,18 @@ def similarity_merge(
         weights = weights[spatial_order]
 
     return tokens.to(original_dtype)
+
+
+def reduce_visual_tokens(
+    tokens: torch.Tensor,
+    source_grid: tuple[int, int],
+    target_grid: tuple[int, int],
+    method: str,
+) -> torch.Tensor:
+    if method == "average":
+        return spatial_average_pool(tokens, source_grid, target_grid)
+    if method == "spatial-select":
+        return spatial_select(tokens, source_grid, target_grid)
+    if method == "similarity-merge":
+        return similarity_merge(tokens, source_grid, target_grid)
+    raise ValueError(f"Unknown pool method: {method}")
