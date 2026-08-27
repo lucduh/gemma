@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 import torch
+from peft import PeftModel
 from tqdm import tqdm
 from transformers import AutoModelForMultimodalLM, AutoProcessor
 
@@ -145,6 +146,7 @@ def main(
     split: str,
     image_tokens: int,
     max_new_tokens: int,
+    adapter: Path | None,
     warmup: int,
     limit: int,
     output_dir: Path,
@@ -162,6 +164,8 @@ def main(
     model = AutoModelForMultimodalLM.from_pretrained(model_id, dtype=torch.bfloat16).to(
         torch_device
     )
+    if adapter is not None:
+        model = PeftModel.from_pretrained(model, adapter).merge_and_unload()
     model.eval()
 
     if warmup:
@@ -247,6 +251,7 @@ def main(
         "config": {
             "model": MODEL_NAME,
             "model_path": str(model_id),
+            "adapter": str(adapter) if adapter else None,
             "dataset": dataset_name,
             "split": split,
             "data_path": str(dataset.path),
@@ -265,8 +270,9 @@ def main(
     }
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    variant = f"{adapter.parent.name}_" if adapter else ""
     output = output_dir / (
-        f"{MODEL_NAME}_manual_{dataset_name}_{split}_{image_tokens}imgtok_"
+        f"{MODEL_NAME}_{variant}manual_{dataset_name}_{split}_{image_tokens}imgtok_"
         f"n{document_count}.json"
     )
     output.write_text(
@@ -292,6 +298,7 @@ def parse_args():
     parser.add_argument("--split", default="test", choices=("train", "test"))
     parser.add_argument("--image-tokens", type=int, default=DEFAULT_GEMMA4_IMAGE_TOKENS)
     parser.add_argument("--max-new-tokens", type=int, default=DEFAULT_MAX_NEW_TOKENS)
+    parser.add_argument("--adapter", type=Path)
     parser.add_argument("--warmup", type=int, default=DEFAULT_WARMUP)
     parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
     parser.add_argument("--output-dir", type=Path, default=EVALUATION_RESULTS_DIR)

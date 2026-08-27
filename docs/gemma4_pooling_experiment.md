@@ -98,8 +98,7 @@ uv run python scripts/train_lora.py \
 Evaluate its best adapter:
 
 ```bash
-uv run python scripts/evaluate.py \
-  --model gemma4-e4b \
+uv run python scripts/evaluate_gemma4_manual.py \
   --dataset BR \
   --image-tokens 560 \
   --adapter results/training/gemma4-e4b-BR-native560/best \
