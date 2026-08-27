@@ -32,12 +32,15 @@ from mllm.gemma4_manual import (
     target_soft_grid,
 )
 from mllm.inference import parse_json
+from mllm.local_resampler import LocalResampler
 from mllm.metrics import calculate_metrics, values_match
 
 MODEL_NAME = "gemma4-e4b"
 DEFAULT_SOURCE_IMAGE_TOKENS = 1120
 DEFAULT_TARGET_IMAGE_TOKENS = 280
 DEFAULT_POOL_METHOD = "average"
+LEARNED_RESAMPLER_METHOD = "local-resampler"
+REDUCTION_METHODS = (*POOL_METHODS, LEARNED_RESAMPLER_METHOD)
 DEFAULT_LIMIT = 10
 STAGES = (
     "image_load_ms",
@@ -72,6 +75,7 @@ def run_inference(
     source_image_tokens,
     target_image_tokens,
     pool_method,
+    learned_resampler,
     max_new_tokens,
 ):
     device = next(model.parameters()).device
@@ -103,9 +107,12 @@ def run_inference(
     timings["vision_encoder_ms"] = elapsed_ms(start)
 
     start = time.perf_counter()
-    pooled_tokens = reduce_visual_tokens(
-        vision_tokens, source_grid, target_grid, pool_method
-    )
+    if pool_method == LEARNED_RESAMPLER_METHOD:
+        pooled_tokens = learned_resampler(vision_tokens, source_grid, target_grid)
+    else:
+        pooled_tokens = reduce_visual_tokens(
+            vision_tokens, source_grid, target_grid, pool_method
+        )
     synchronize(device)
     timings["pooling_ms"] = elapsed_ms(start)
 
@@ -181,6 +188,7 @@ def main(
     pool_method: str,
     max_new_tokens: int,
     adapter: Path | None,
+    resampler_path: Path | None,
     warmup: int,
     limit: int,
     output_dir: Path,
@@ -200,6 +208,15 @@ def main(
         model = PeftModel.from_pretrained(model, adapter).merge_and_unload()
     model.eval()
 
+    learned_resampler = None
+    if pool_method == LEARNED_RESAMPLER_METHOD:
+        resampler_path = resampler_path or adapter
+        if resampler_path is None:
+            raise ValueError("local-resampler requires --resampler or --adapter")
+        learned_resampler = LocalResampler.from_pretrained(
+            resampler_path, torch_device
+        ).eval()
+
     if warmup:
         image, _, _ = dataset[0]
         for _ in range(warmup):
@@ -212,6 +229,7 @@ def main(
                     source_image_tokens,
                     target_image_tokens,
                     pool_method,
+                    learned_resampler,
                     max_new_tokens,
                 )
 
@@ -237,6 +255,7 @@ def main(
                 source_image_tokens,
                 target_image_tokens,
                 pool_method,
+                learned_resampler,
                 max_new_tokens,
             )
 
@@ -288,6 +307,7 @@ def main(
             "model": MODEL_NAME,
             "model_path": str(model_id),
             "adapter": str(adapter) if adapter else None,
+            "resampler": str(resampler_path) if resampler_path else None,
             "dataset": dataset_name,
             "split": split,
             "data_path": str(dataset.path),
@@ -341,10 +361,11 @@ def parse_args():
         "--target-image-tokens", type=int, default=DEFAULT_TARGET_IMAGE_TOKENS
     )
     parser.add_argument(
-        "--pool-method", choices=POOL_METHODS, default=DEFAULT_POOL_METHOD
+        "--pool-method", choices=REDUCTION_METHODS, default=DEFAULT_POOL_METHOD
     )
     parser.add_argument("--max-new-tokens", type=int, default=DEFAULT_MAX_NEW_TOKENS)
     parser.add_argument("--adapter", type=Path)
+    parser.add_argument("--resampler", dest="resampler_path", type=Path)
     parser.add_argument("--warmup", type=int, default=DEFAULT_WARMUP)
     parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
     parser.add_argument("--output-dir", type=Path, default=EVALUATION_RESULTS_DIR)

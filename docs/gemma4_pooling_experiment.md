@@ -130,3 +130,33 @@ uv run python scripts/evaluate_gemma4_pooling.py \
 ```
 
 The pooled training script supports configurable training batches and freezes the vision encoder, projector, and fixed reducer. Only language-model LoRA parameters are trained. Reduce `--batch-size` and increase `--gradient-accumulation` if GPU memory is limited.
+
+## 5. Learned local resampler
+
+Train the local attention resampler jointly with language-model LoRA:
+
+```bash
+uv run python scripts/train_lora_resampler.py \
+  --dataset BR \
+  --run-name gemma4-e4b-BR-resampler1120to560 \
+  --source-image-tokens 1120 \
+  --target-image-tokens 560 \
+  --neighbors 4 \
+  --batch-size 4
+```
+
+Evaluate the best LoRA and resampler checkpoint:
+
+```bash
+uv run python scripts/evaluate_gemma4_pooling.py \
+  --dataset BR \
+  --source-image-tokens 1120 \
+  --target-image-tokens 560 \
+  --pool-method local-resampler \
+  --adapter results/training/gemma4-e4b-BR-resampler1120to560/best \
+  --limit 10
+```
+
+The evaluator loads `resampler.pt` and `resampler_config.json` from the adapter directory automatically. Use `--resampler PATH` only when the resampler and LoRA adapter are stored separately.
+
+The resampler emits one token for every target-grid position. Each output attends to the nearest source tokens using learned content scores and a spatial-distance bias. It is initialized close to fixed spatial selection. The vision encoder and Gemma multimodal projector remain frozen; the resampler and language-model LoRA are optimized with separate learning rates.

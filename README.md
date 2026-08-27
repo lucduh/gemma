@@ -70,6 +70,11 @@ uv run python scripts/evaluate.py \
 uv run python scripts/train_lora.py \
   --model gemma3 --dataset KARAPASS_ID --run-name gemma3-karapass-id
 
+# Jointly train Gemma 4 LoRA and the learned local visual resampler.
+uv run python scripts/train_lora_resampler.py \
+  --dataset BR --run-name gemma4-e4b-BR-resampler1120to560 \
+  --source-image-tokens 1120 --target-image-tokens 560
+
 # Evaluate the adapter.
 uv run python scripts/evaluate.py \
   --model gemma3 --dataset KARAPASS_ID \
