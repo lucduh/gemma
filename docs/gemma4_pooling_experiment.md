@@ -82,7 +82,37 @@ Compare these fields:
 
 The pooling run still pays the full 1120-budget vision-encoder cost. Its expected savings are in LLM prefill and visual-token KV-cache usage.
 
-## 4. LoRA comparison
+## 4. Vision encoder depth ablation
+
+The manual evaluator can physically retain a uniformly spaced subset of Gemma 4's
+vision encoder blocks. The first and last blocks are retained when at least two
+blocks remain.
+
+```bash
+# Full-depth reference.
+uv run python scripts/evaluate_gemma4_manual.py \
+  --dataset BR --image-tokens 560 --vision-keep-ratio 1.0 --limit 10
+
+# Keep approximately half of the vision blocks.
+uv run python scripts/evaluate_gemma4_manual.py \
+  --dataset BR --image-tokens 560 --vision-keep-ratio 0.5 --limit 10
+
+# Small depth/resolution sweep.
+for ratio in 1.0 0.75 0.5 0.25; do
+  for tokens in 280 560 1120; do
+    uv run python scripts/evaluate_gemma4_manual.py \
+      --dataset BR --image-tokens "$tokens" \
+      --vision-keep-ratio "$ratio" --limit 10
+  done
+done
+```
+
+The result config records the requested ratio, actual retained depth, original
+layer indices, and vision-tower parameter counts. Pruned result filenames include
+a `depthXofY` component. This is an untrained block-ablation experiment; it is
+intended to identify useful student depths before distillation.
+
+## 5. LoRA comparison
 
 Train the native 560-token-budget baseline:
 

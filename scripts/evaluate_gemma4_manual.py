@@ -28,6 +28,7 @@ from mllm.gemma4_manual import (
     prepare_inputs,
     project_vision,
 )
+from mllm.gemma4_pruning import prune_vision_encoder
 from mllm.inference import parse_json
 from mllm.metrics import calculate_metrics, values_match
 
@@ -147,6 +148,7 @@ def main(
     image_tokens: int,
     max_new_tokens: int,
     adapter: Path | None,
+    vision_keep_ratio: float,
     warmup: int,
     limit: int,
     output_dir: Path,
@@ -161,12 +163,18 @@ def main(
     _, model_id = MODELS[MODEL_NAME]
     torch_device = torch.device(device)
     processor = AutoProcessor.from_pretrained(model_id)
-    model = AutoModelForMultimodalLM.from_pretrained(model_id, dtype=torch.bfloat16).to(
-        torch_device
-    )
+    model = AutoModelForMultimodalLM.from_pretrained(model_id, dtype=torch.bfloat16)
     if adapter is not None:
         model = PeftModel.from_pretrained(model, adapter).merge_and_unload()
+    pruning_info = prune_vision_encoder(model, vision_keep_ratio)
+    model = model.to(torch_device)
     model.eval()
+
+    print(
+        "Vision encoder: "
+        f"{pruning_info.retained_layers}/{pruning_info.original_layers} blocks "
+        f"{list(pruning_info.retained_indices)}"
+    )
 
     if warmup:
         image, _, _ = dataset[0]
@@ -258,6 +266,7 @@ def main(
             "fields": list(dataset.fields),
             "batch_size": 1,
             "image_tokens": image_tokens,
+            "vision_pruning": pruning_info.to_dict(),
             "max_new_tokens": max_new_tokens,
             "warmup": warmup,
             "limit": limit,
@@ -270,10 +279,15 @@ def main(
     }
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    variant = f"{adapter.parent.name}_" if adapter else ""
+    adapter_variant = f"{adapter.parent.name}_" if adapter else ""
+    depth_variant = (
+        f"depth{pruning_info.retained_layers}of{pruning_info.original_layers}_"
+        if pruning_info.retained_layers < pruning_info.original_layers
+        else ""
+    )
     output = output_dir / (
-        f"{MODEL_NAME}_{variant}manual_{dataset_name}_{split}_{image_tokens}imgtok_"
-        f"n{document_count}.json"
+        f"{MODEL_NAME}_{adapter_variant}{depth_variant}manual_{dataset_name}_{split}_"
+        f"{image_tokens}imgtok_n{document_count}.json"
     )
     output.write_text(
         json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -299,6 +313,12 @@ def parse_args():
     parser.add_argument("--image-tokens", type=int, default=DEFAULT_GEMMA4_IMAGE_TOKENS)
     parser.add_argument("--max-new-tokens", type=int, default=DEFAULT_MAX_NEW_TOKENS)
     parser.add_argument("--adapter", type=Path)
+    parser.add_argument(
+        "--vision-keep-ratio",
+        type=float,
+        default=1.0,
+        help="Fraction of uniformly spaced vision encoder blocks to retain.",
+    )
     parser.add_argument("--warmup", type=int, default=DEFAULT_WARMUP)
     parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
     parser.add_argument("--output-dir", type=Path, default=EVALUATION_RESULTS_DIR)
