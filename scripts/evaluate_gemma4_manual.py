@@ -28,7 +28,7 @@ from mllm.gemma4_manual import (
     prepare_inputs,
     project_vision,
 )
-from mllm.gemma4_pruning import prune_vision_encoder
+from mllm.gemma4_pruning import load_vision_checkpoint, prune_vision_encoder
 from mllm.inference import parse_json
 from mllm.metrics import calculate_metrics, values_match
 
@@ -148,7 +148,8 @@ def main(
     image_tokens: int,
     max_new_tokens: int,
     adapter: Path | None,
-    vision_keep_ratio: float,
+    vision_keep_ratio: float | None,
+    vision_checkpoint: Path | None,
     warmup: int,
     limit: int,
     output_dir: Path,
@@ -166,7 +167,14 @@ def main(
     model = AutoModelForMultimodalLM.from_pretrained(model_id, dtype=torch.bfloat16)
     if adapter is not None:
         model = PeftModel.from_pretrained(model, adapter).merge_and_unload()
-    pruning_info = prune_vision_encoder(model, vision_keep_ratio)
+    if vision_checkpoint is not None:
+        pruning_info = load_vision_checkpoint(
+            model, vision_checkpoint, vision_keep_ratio
+        )
+    else:
+        pruning_info = prune_vision_encoder(
+            model, vision_keep_ratio if vision_keep_ratio is not None else 1.0
+        )
     model = model.to(torch_device)
     model.eval()
 
@@ -260,6 +268,9 @@ def main(
             "model": MODEL_NAME,
             "model_path": str(model_id),
             "adapter": str(adapter) if adapter else None,
+            "vision_checkpoint": (
+                str(vision_checkpoint) if vision_checkpoint else None
+            ),
             "dataset": dataset_name,
             "split": split,
             "data_path": str(dataset.path),
@@ -280,13 +291,23 @@ def main(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     adapter_variant = f"{adapter.parent.name}_" if adapter else ""
+    if vision_checkpoint is not None:
+        checkpoint_name = (
+            vision_checkpoint.parent.name
+            if vision_checkpoint.name in {"best", "last"}
+            else vision_checkpoint.name
+        )
+        checkpoint_variant = f"{checkpoint_name}_"
+    else:
+        checkpoint_variant = ""
     depth_variant = (
         f"depth{pruning_info.retained_layers}of{pruning_info.original_layers}_"
         if pruning_info.retained_layers < pruning_info.original_layers
         else ""
     )
     output = output_dir / (
-        f"{MODEL_NAME}_{adapter_variant}{depth_variant}manual_{dataset_name}_{split}_"
+        f"{MODEL_NAME}_{adapter_variant}{checkpoint_variant}{depth_variant}manual_"
+        f"{dataset_name}_{split}_"
         f"{image_tokens}imgtok_n{document_count}.json"
     )
     output.write_text(
@@ -316,8 +337,12 @@ def parse_args():
     parser.add_argument(
         "--vision-keep-ratio",
         type=float,
-        default=1.0,
         help="Fraction of uniformly spaced vision encoder blocks to retain.",
+    )
+    parser.add_argument(
+        "--vision-checkpoint",
+        type=Path,
+        help="Distilled vision checkpoint directory; its saved depth is used by default.",
     )
     parser.add_argument("--warmup", type=int, default=DEFAULT_WARMUP)
     parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT)

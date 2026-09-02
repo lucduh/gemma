@@ -70,6 +70,11 @@ uv run python scripts/evaluate.py \
 uv run python scripts/train_lora.py \
   --model gemma3 --dataset KARAPASS_ID --run-name gemma3-karapass-id
 
+# Distill a 12-of-16-block Gemma 4 vision encoder.
+uv run python scripts/train_vision_distillation.py \
+  --dataset BR --run-name gemma4-e4b-BR-vision12of16-560 \
+  --image-tokens 560 --vision-keep-ratio 0.75
+
 # Evaluate the adapter.
 uv run python scripts/evaluate.py \
   --model gemma3 --dataset KARAPASS_ID \

@@ -1,6 +1,9 @@
+import json
 import math
 from dataclasses import asdict, dataclass
+from pathlib import Path
 
+import torch
 from torch import nn
 
 
@@ -43,15 +46,14 @@ def uniform_layer_indices(total_layers: int, keep_ratio: float) -> tuple[int, ..
     )
 
 
-def prune_vision_encoder(model, keep_ratio: float) -> VisionPruningInfo:
+def prune_vision_tower(vision_tower, keep_ratio: float) -> VisionPruningInfo:
     """Physically remove Gemma 4 vision blocks while preserving their order."""
     try:
-        vision_tower = model.model.vision_tower
         encoder = vision_tower.encoder
         layers = encoder.layers
     except AttributeError as error:
         raise ValueError(
-            "Expected a Gemma 4 model with model.vision_tower.encoder.layers"
+            "Expected a Gemma 4 vision tower with encoder.layers"
         ) from error
 
     if not isinstance(layers, nn.ModuleList):
@@ -78,3 +80,54 @@ def prune_vision_encoder(model, keep_ratio: float) -> VisionPruningInfo:
         original_parameters=original_parameters,
         retained_parameters=retained_parameters,
     )
+
+
+def prune_vision_encoder(model, keep_ratio: float) -> VisionPruningInfo:
+    try:
+        vision_tower = model.model.vision_tower
+    except AttributeError as error:
+        raise ValueError("Expected a Gemma 4 model with model.vision_tower") from error
+    return prune_vision_tower(vision_tower, keep_ratio)
+
+
+def save_vision_checkpoint(
+    vision_tower, pruning_info: VisionPruningInfo, directory: str | Path
+) -> None:
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    torch.save(vision_tower.state_dict(), directory / "vision_tower.pt")
+    metadata = {"format_version": 1, "pruning": pruning_info.to_dict()}
+    (directory / "vision_config.json").write_text(
+        json.dumps(metadata, indent=2), encoding="utf-8"
+    )
+
+
+def load_vision_checkpoint(
+    model, directory: str | Path, requested_keep_ratio: float | None = None
+) -> VisionPruningInfo:
+    directory = Path(directory)
+    metadata = json.loads(
+        (directory / "vision_config.json").read_text(encoding="utf-8")
+    )
+    checkpoint_pruning = metadata["pruning"]
+    checkpoint_ratio = float(checkpoint_pruning["requested_keep_ratio"])
+    pruning_info = prune_vision_encoder(model, checkpoint_ratio)
+
+    expected_indices = tuple(checkpoint_pruning["retained_indices"])
+    if pruning_info.retained_indices != expected_indices:
+        raise ValueError(
+            "Checkpoint layer selection does not match the loaded base model: "
+            f"expected {expected_indices}, got {pruning_info.retained_indices}"
+        )
+    if requested_keep_ratio is not None:
+        requested_indices = uniform_layer_indices(
+            pruning_info.original_layers, requested_keep_ratio
+        )
+        if requested_indices != expected_indices:
+            raise ValueError("--vision-keep-ratio does not match the vision checkpoint")
+
+    state = torch.load(
+        directory / "vision_tower.pt", map_location="cpu", weights_only=True
+    )
+    model.model.vision_tower.load_state_dict(state)
+    return pruning_info

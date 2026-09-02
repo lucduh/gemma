@@ -112,7 +112,36 @@ layer indices, and vision-tower parameter counts. Pruned result filenames includ
 a `depthXofY` component. This is an untrained block-ablation experiment; it is
 intended to identify useful student depths before distillation.
 
-## 5. LoRA comparison
+## 5. Vision representation distillation
+
+Train a 12-of-16-block student to match the frozen full-depth vision tower's final
+visual tokens. Only the student vision tower is trained; the language model is not
+loaded onto the GPU.
+
+```bash
+uv run python scripts/train_vision_distillation.py \
+  --dataset BR \
+  --run-name gemma4-e4b-BR-vision12of16-560 \
+  --image-tokens 560 \
+  --vision-keep-ratio 0.75
+```
+
+Evaluate the best student checkpoint with the unchanged language model:
+
+```bash
+uv run python scripts/evaluate_gemma4_manual.py \
+  --dataset BR \
+  --image-tokens 560 \
+  --vision-checkpoint \
+    results/training/gemma4-e4b-BR-vision12of16-560/best \
+  --limit 10
+```
+
+The checkpoint records its retained layer indices, so `--vision-keep-ratio` is not
+needed during evaluation. Training saves cosine and Smooth L1 representation
+losses under `train.json` and writes `best/` and `last/` vision checkpoints.
+
+## 6. LoRA comparison
 
 Train the native 560-token-budget baseline:
 
