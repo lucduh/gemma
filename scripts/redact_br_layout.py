@@ -21,6 +21,65 @@ DEFAULT_IMAGE_TOKENS = 1120
 DEFAULT_MAX_NEW_TOKENS = 2048
 CATEGORY = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
+# Separate passes are intentionally redundant. Focused prompts find substantially
+# more regions than asking a vision-language model for every privacy category once.
+SENSITIVE_PASSES = (
+    (
+        "names_and_organizations",
+        (
+            "person names, customer or provider names, legal company names, trade names, "
+            "initials, and identifying names inside logos, stamps, or signatures"
+        ),
+        "person_name, company_name, trade_name, signature, identifying_logo",
+    ),
+    (
+        "addresses_and_contacts",
+        (
+            "every complete or partial address block, street, building number, "
+            "complement, neighborhood, city/state location, postal code or CEP, "
+            "telephone number, email address, and identifying website"
+        ),
+        "address, street, location, cep, phone, email, website",
+    ),
+    (
+        "identifiers",
+        (
+            "CPF, CNPJ, municipal or state registration, personal or company "
+            "identifier, account number, registration number, and any other unique "
+            "alphanumeric ID"
+        ),
+        "cpf, cnpj, tax_identifier, registration, account, other_identifier",
+    ),
+    (
+        "document_and_transaction",
+        (
+            "invoice or document number, issue or service date and time, order, "
+            "contract, protocol, verification or authentication code, access key, "
+            "and transaction ID"
+        ),
+        "document_number, date, order, contract, protocol, verification_code, access_key",
+    ),
+    (
+        "financial",
+        (
+            "bank, branch, account, PIX or payment details and every monetary value, "
+            "tax amount, rate, deduction, total, and other transaction-specific "
+            "financial value"
+        ),
+        "bank_details, payment_details, amount, tax, rate, total",
+    ),
+    (
+        "machine_codes_and_free_text",
+        (
+            "the complete area of every QR code, barcode, signature, stamp, long "
+            "machine code, and free-text service description or note that can reveal "
+            "a person, organization, location, project, case, health matter, or "
+            "transaction"
+        ),
+        "qr_code, barcode, signature, stamp, machine_code, sensitive_free_text",
+    ),
+)
+
 
 @dataclass(frozen=True)
 class Redaction:
@@ -33,7 +92,11 @@ def build_prompt(fields: tuple[str, ...]) -> str:
     return f"""Locate every identifying or confidential region in this Brazilian service invoice.
 
 Return exactly one compact JSON object and nothing else, with this schema:
-{{"redactions":[{{"category":"cpf_cnpj_tomador","box_2d":[y_min,x_min,y_max,x_max]}}]}}
+{{"redactions":[{{"category":"cpf_cnpj_tomador","box_2d":[y_min,x_min,y_max,x_max]}},{{"category":"address","box_2d":[y_min,x_min,y_max,x_max]}}]}}
+
+The array must contain a separate object for EVERY sensitive region in the document.
+A normal invoice should produce many objects. Scan from top to bottom and do not stop
+after the first match.
 
 Rules:
 - Coordinates are integers from 0 to 1000, normalized over the entire image.
@@ -49,6 +112,58 @@ Rules:
 - Do not box generic labels unless the label itself contains identifying information.
 - When uncertain whether a region is identifying, include it.
 """
+
+
+def build_sensitive_prompt(pass_name: str, targets: str, categories: str) -> str:
+    return f"""Perform a focused privacy scan of this Brazilian service invoice.
+
+Scan type: {pass_name}
+Find ALL of the following anywhere on the page: {targets}.
+Use these category names when applicable: {categories}.
+
+Return exactly one compact JSON object and nothing else:
+{{"redactions":[{{"category":"address","box_2d":[y_min,x_min,y_max,x_max]}},{{"category":"cep","box_2d":[y_min,x_min,y_max,x_max]}}]}}
+
+Return one object for every separate matching region. Scan the full page from top to
+bottom and do not stop after the first match. Coordinates are integers from 0 to
+1000 over the entire image in exact [y_min, x_min, y_max, x_max] order. Cover each
+complete value or visual code, including punctuation. For a multiline address or
+free-text block, cover the complete block. Do not include transcribed text or field
+values. Return an empty redactions list only when none of these targets is visible.
+"""
+
+
+def build_field_prompt(field: str, value: str) -> str:
+    encoded_value = json.dumps(value, ensure_ascii=False)
+    return f"""Locate the visible value corresponding to one annotated field in this Brazilian service invoice.
+
+Field category: {field}
+Annotation value: {encoded_value}
+
+Return exactly this JSON shape and nothing else:
+{{"redactions":[{{"category":"{field}","box_2d":[y_min,x_min,y_max,x_max]}}]}}
+
+Coordinates are integers from 0 to 1000 over the entire image, in the exact order
+[y_min, x_min, y_max, x_max]. Box the complete visible field value, including any
+punctuation or adjacent time component. Use its label and section to disambiguate it.
+The annotation can be normalized or formatted slightly differently from the image.
+Return an empty redactions list only if the corresponding value is genuinely absent.
+Do not return the transcribed value.
+"""
+
+
+def annotation_targets(
+    row: pd.Series, fields: tuple[str, ...]
+) -> list[tuple[str, str]]:
+    targets = []
+    for field in fields:
+        value = row[field]
+        if value is None or (not isinstance(value, (list, dict)) and pd.isna(value)):
+            continue
+        rendered = str(value).strip()
+        if rendered:
+            targets.append((field, rendered))
+    return targets
 
 
 def decode_json_object(response: str) -> dict:
@@ -200,6 +315,7 @@ def main(
     padding: int,
     adapter: Path | None,
     reuse_boxes: bool,
+    general_only: bool,
 ) -> None:
     if len(set(indices)) != 2:
         raise ValueError("--indices must contain two distinct row positions")
@@ -235,9 +351,60 @@ def main(
             )
             with Image.open(image_path) as source:
                 model_image = source.convert("RGB")
+            print(f"Locating general sensitive regions in BR/{split} row {index}...")
             inputs = gemma.prepare_inputs([model_image], prompt, image_tokens)
             responses, _ = gemma.generate(inputs, max_new_tokens)
             redactions = parse_redactions(responses[0])
+
+            located_fields = set()
+            if not general_only:
+                for pass_name, targets, categories in SENSITIVE_PASSES:
+                    print(f"  Focused privacy scan: {pass_name}")
+                    sensitive_prompt = build_sensitive_prompt(
+                        pass_name, targets, categories
+                    )
+                    inputs = gemma.prepare_inputs(
+                        [model_image], sensitive_prompt, image_tokens
+                    )
+                    responses, _ = gemma.generate(inputs, max_new_tokens)
+                    try:
+                        pass_redactions = parse_redactions(responses[0])
+                    except (TypeError, ValueError) as error:
+                        print(f"    WARNING: invalid scan response: {error}")
+                        continue
+                    if not pass_redactions:
+                        print("    WARNING: this scan returned no regions")
+                    redactions.extend(pass_redactions)
+
+                for field, value in annotation_targets(frame.iloc[index], fields):
+                    print(f"  Targeting annotated field: {field}")
+                    field_prompt = build_field_prompt(field, value)
+                    inputs = gemma.prepare_inputs(
+                        [model_image], field_prompt, image_tokens
+                    )
+                    responses, _ = gemma.generate(inputs, max_new_tokens)
+                    try:
+                        field_redactions = parse_redactions(responses[0])
+                    except (TypeError, ValueError) as error:
+                        print(f"    WARNING: invalid grounding response: {error}")
+                        continue
+                    if field_redactions:
+                        located_fields.add(field)
+                    redactions.extend(
+                        Redaction(field, redaction.box_2d)
+                        for redaction in field_redactions
+                    )
+
+                expected_fields = {
+                    field for field, _ in annotation_targets(frame.iloc[index], fields)
+                }
+                missing_fields = sorted(expected_fields - located_fields)
+                if missing_fields:
+                    print(
+                        "  WARNING: no targeted box for: " + ", ".join(missing_fields)
+                    )
+
+            redactions = list(dict.fromkeys(redactions))
             boxes_path.write_text(
                 json.dumps(boxes_payload(redactions), indent=2), encoding="utf-8"
             )
@@ -305,6 +472,11 @@ def parse_args() -> argparse.Namespace:
         "--reuse-boxes",
         action="store_true",
         help="skip Gemma and rerender using edited *.boxes.json files",
+    )
+    parser.add_argument(
+        "--general-only",
+        action="store_true",
+        help="skip all focused privacy scans and annotated-field grounding passes",
     )
     return parser.parse_args()
 

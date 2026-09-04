@@ -36,6 +36,18 @@ uv run python scripts/data/analyze.py --dataset BR
 
 `--data-root` can be passed to the preparation and analysis commands without changing the registered inference paths.
 
+## Create anonymized report examples
+
+To retain the source documents' exact visual formatting, Gemma can locate sensitive regions and the script permanently redacts those pixels in copies of exactly two BR images. It also creates standalone HTML files containing only the redacted images.
+
+```bash
+uv run python scripts/redact_br_layout.py \
+  --model gemma4-e4b --split test --indices 0 1 \
+  --image-tokens 1120
+```
+
+Use `scripts/anonymize_br.py` instead when an editable—but visually approximate—HTML transcription is preferred. Automated detection is not a privacy guarantee; all output must be checked against the source before publication. See [`docs/anonymize_br_examples.md`](docs/anonymize_br_examples.md) for the complete review, editing, export, and cleanup workflow.
+
 ## Run inference and training
 
 The batch-size-1 Gemma 4 E4B experiments expose image encoding, LLM prefill, and greedy decoding as separate stages. Both commands evaluate 10 images by default; use `--limit` to change the sample count.
